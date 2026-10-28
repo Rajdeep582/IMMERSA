@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAnatomyStore } from '../../store/useAnatomyStore';
 import { StandardView } from '../../types/anatomy';
-import { Compass, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { Compass, RotateCcw, ZoomIn, ZoomOut, Move3d, Hand } from 'lucide-react';
 
 export const FloatingToolbar: React.FC = () => {
   const activeView = useAnatomyStore((s) => s.activeView);
@@ -11,6 +11,8 @@ export const FloatingToolbar: React.FC = () => {
   const triggerZoomOut = useAnatomyStore((s) => s.triggerZoomOut);
   const inspectorOpen = useAnatomyStore((s) => s.inspectorOpen);
   const selectedPartId = useAnatomyStore((s) => s.selectedPartId);
+  const interactionMode = useAnatomyStore((s) => s.interactionMode);
+  const setInteractionMode = useAnatomyStore((s) => s.setInteractionMode);
 
   const isSheetOpenOnMobile = inspectorOpen;
 
@@ -29,9 +31,33 @@ export const FloatingToolbar: React.FC = () => {
         isSheetOpenOnMobile ? 'max-md:opacity-0 max-md:pointer-events-none' : 'opacity-100'
       }`}
     >
-      <div className="flex items-center gap-1 px-2 border-r border-slate-800 text-slate-500 font-mono text-[10px] uppercase tracking-wider hidden sm:flex">
-        <Compass className="w-3.5 h-3.5 text-teal-400" />
-        <span>View</span>
+      {/* Interaction Mode: Orbit / Pan */}
+      <div className="flex items-center gap-1 border-r border-slate-800 pr-1.5">
+        <button
+          onClick={() => setInteractionMode('rotate')}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+            interactionMode === 'rotate'
+              ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+          }`}
+          title="Rotate Mode (Default): Left-click or 1-finger to rotate whole body (Press H to toggle)"
+        >
+          <Move3d className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline font-mono text-[11px]">Rotate</span>
+        </button>
+
+        <button
+          onClick={() => setInteractionMode('pan')}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+            interactionMode === 'pan'
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+          }`}
+          title="Pan Mode: Drag to move the entire body model up, down, left, right (Press H to toggle)"
+        >
+          <Hand className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline font-mono text-[11px]">Pan</span>
+        </button>
       </div>
 
       <div className="flex items-center gap-1">

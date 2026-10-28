@@ -176,16 +176,16 @@ export const InfoPanel: React.FC = () => {
             </div>
             <div className="space-y-1.5 text-[11px] text-slate-400">
               <div className="flex items-center gap-2">
-                <Move3d className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                Drag to rotate · scroll or pinch to zoom
+                <Move3d className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                <span>Drag to rotate · Right-click or 2-finger drag to pan</span>
               </div>
               <div className="flex items-center gap-2">
                 <MousePointer2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                Click any structure to open its clinical profile
+                <span>Click / tap any structure to inspect & know more</span>
               </div>
               <div className="flex items-center gap-2">
                 <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                Press <kbd className="px-1 py-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] font-mono">/</kbd> to search
+                <span>Press <kbd className="px-1 py-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] font-mono">/</kbd> to search · <kbd className="px-1 py-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] font-mono">H</kbd> to toggle pan mode</span>
               </div>
             </div>
           </div>

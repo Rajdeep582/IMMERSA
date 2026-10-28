@@ -55,20 +55,9 @@ const EXTERNAL_GENITAL_FOCUS = new Set([
 ]);
 
 const SKIN_INTEGRATED_SURFACE_PARTS = new Set([
-  'F_MONS_PUBIS',
-  'F_LABIUM_MAJUS_R',
-  'F_LABIUM_MAJUS_L',
-  'F_LABIUM_MINUS_R',
-  'F_LABIUM_MINUS_L',
-  'F_CLITORIS_GLANS',
-  'F_CLITORAL_HOOD',
   'F_VESTIBULE',
   'F_URETHRA_ORIFICE',
   'F_VAGINAL_ORIFICE',
-  'F_AREOLA_R',
-  'F_AREOLA_L',
-  'F_NIPPLE_R',
-  'F_NIPPLE_L',
 ]);
 
 /**
@@ -101,6 +90,8 @@ export const MainViewport: React.FC = () => {
   const ghostOthers = useAnatomyStore((s) => s.ghostOthers);
   const explosionFactor = useAnatomyStore((s) => s.explosionFactor);
   const activeView = useAnatomyStore((s) => s.activeView);
+  const interactionMode = useAnatomyStore((s) => s.interactionMode);
+  const panNonce = useAnatomyStore((s) => s.panNonce);
   const cameraResetNonce = useAnatomyStore((s) => s.cameraResetNonce);
   const zoomInNonce = useAnatomyStore((s) => s.zoomInNonce);
   const zoomOutNonce = useAnatomyStore((s) => s.zoomOutNonce);
@@ -217,11 +208,13 @@ export const MainViewport: React.FC = () => {
       60
     );
     camera.position.set(0, 0.88, 3.1);
+    scene.add(camera);
 
     // Unified, Rock-Solid Touch & Camera Controller
-    const controller = new AnatomyTouchController(camera, renderer.domElement);
+    const controller = new AnatomyTouchController(camera, renderer.domElement, scene);
     controller.target.set(0, 0.865, 0);
     controller.syncFromCamera();
+    controller.setInteractionMode(useAnatomyStore.getState().interactionMode);
     touchControllerRef.current = controller;
     controller.onChange = () => {
       dirtyRef.current = true;
@@ -737,7 +730,7 @@ export const MainViewport: React.FC = () => {
           renderer.domElement.style.cursor = 'pointer';
         } else {
           tipEl.style.display = 'none';
-          renderer.domElement.style.cursor = 'grab';
+          renderer.domElement.style.cursor = controller.getInteractionMode() === 'pan' ? 'all-scroll' : 'grab';
         }
       }
     };
@@ -915,14 +908,23 @@ export const MainViewport: React.FC = () => {
     dirtyRef.current = true;
   }, [activeView]);
 
+  // Handle interaction mode changes (Rotate vs Pan)
+  useEffect(() => {
+    if (!touchControllerRef.current) return;
+    touchControllerRef.current.setInteractionMode(interactionMode);
+  }, [interactionMode]);
+
+  // Handle programmatically triggered pan steps
+  useEffect(() => {
+    if (!touchControllerRef.current || !panNonce) return;
+    touchControllerRef.current.pan(panNonce.deltaX, panNonce.deltaY);
+    dirtyRef.current = true;
+  }, [panNonce]);
+
   // Handle camera reset trigger
   useEffect(() => {
     if (!touchControllerRef.current || cameraResetNonce === 0) return;
-    touchControllerRef.current.transitionTo(
-      new THREE.Vector3(0, 0.88, 3.1),
-      new THREE.Vector3(0, 0.865, 0),
-      850
-    );
+    touchControllerRef.current.resetCamera(800);
     dirtyRef.current = true;
   }, [cameraResetNonce]);
 

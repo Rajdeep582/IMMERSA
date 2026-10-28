@@ -331,6 +331,19 @@ export const FEMALE_PARTS: Part[] = [
     indexCount: 500,
     bounds: [[0.072, 1.240, 0.120], [0.084, 1.252, 0.127]],
   },
+  {
+    id: 'F_HAIR',
+    name: 'Hair of Head (Female)',
+    conceptId: 'FMA54241',
+    system: 'integumentary',
+    chunk: -1,
+    positions: 0,
+    normals: 0,
+    indices: 0,
+    vertexCount: 1882,
+    indexCount: 10164,
+    bounds: [[-0.087, 1.485, -0.114], [0.087, 1.724, 0.082]],
+  },
 ];
 
 export const FEMALE_CLINICAL_PROFILES: Record<string, ClinicalProfile> = {
@@ -856,5 +869,23 @@ export const FEMALE_CLINICAL_PROFILES: Record<string, ClinicalProfile> = {
     relations: ['Central on the areola', 'Overlies lactiferous sinuses'],
     clinicalNotes: 'Nipple and areolar anatomy varies widely; breastfeeding difficulty may relate to nipple shape or latch, not anatomy alone.',
     references: ['OpenStax Anatomy and Physiology 2e, Ch. 27.2.'],
+  },
+
+  F_HAIR: {
+    id: 'F_HAIR',
+    canonicalName: 'Hair of the Head',
+    latinName: 'Capilli',
+    commonName: 'Head Hair',
+    system: 'integumentary',
+    region: 'Head and Neck',
+    parentStructure: 'Integumentary System',
+    childStructures: ['Hair shaft', 'Hair follicle', 'Cuticle', 'Cortex', 'Medulla'],
+    primaryFunction: 'Provides thermal insulation, UV photoprotection, and tactile sensory perception.',
+    arterialSupply: 'Branches of external carotid artery (superficial temporal, occipital, posterior auricular arteries).',
+    venousDrainage: 'Superficial temporal and occipital veins into the internal and external jugular veins.',
+    innervation: 'Branches of the trigeminal nerve (ophthalmic, maxillary, mandibular) and cervical plexus (greater occipital, lesser occipital nerves).',
+    relations: ['Originates from follicular epidermal invaginations within the scalp dermis and hypodermis.'],
+    clinicalNotes: 'Female scalp hair density and hair shaft caliber are modulated by estrogen and androgen signaling; postpartum estrogen withdrawal frequently induces telogen effluvium.',
+    references: ['OpenStax Anatomy and Physiology 2e, Ch. 5.', "Gray's Anatomy (42nd ed.)."],
   },
 };

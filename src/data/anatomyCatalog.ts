@@ -41,6 +41,7 @@ export const SURFACE_PART_IDS = new Set<string>([
   'FJ2813', // hair of head
   'FJ2814', // lip
   'FJ2815', // pubic hair (male; hidden on female model)
+  'F_HAIR',  // hair of head (female)
   'F_AREOLA_R',
   'F_AREOLA_L',
   'F_NIPPLE_R',
@@ -89,7 +90,7 @@ export function isSurfacePart(part: Part): boolean {
  */
 export function getPartMaterialKey(part: Part): PartMaterialKey {
   if (part.id === 'FJ2810') return 'skin';
-  if (['FJ2812', 'FJ2813', 'FJ2815'].includes(part.id)) return 'hair';
+  if (['FJ2812', 'FJ2813', 'FJ2815', 'F_HAIR'].includes(part.id)) return 'hair';
   if (part.id === 'FJ2814') return 'lip';
   if (part.id === 'F_AREOLA_R' || part.id === 'F_AREOLA_L') return 'areola';
   if (part.id === 'F_NIPPLE_R' || part.id === 'F_NIPPLE_L') return 'nipple';

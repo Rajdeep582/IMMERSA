@@ -104,6 +104,9 @@ export function getHighDetailGeometry(part: Part): THREE.BufferGeometry | null {
     case 'F_NIPPLE_L':
       geom = createHighDetailNippleGeometry(false);
       break;
+    case 'F_HAIR':
+      geom = createHighDetailFemaleHairGeometry();
+      break;
     case 'M_SCROTUM':
       geom = createHighDetailScrotumGeometry();
       break;
@@ -727,6 +730,55 @@ function createHighDetailNippleGeometry(isRight: boolean): THREE.BufferGeometry 
   nipple.rotateX(Math.PI * 0.5);
   nipple.translate(sign * 0.078, 1.246, 0.1235);
   return nipple;
+}
+
+/**
+ * Adult female hairstyle geometry: smooth cranial vault volume with graceful
+ * lateral tresses framing the jawline and nape of the neck.
+ */
+function createHighDetailFemaleHairGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+
+  // 1. Crown / Top Cranial Dome Volume
+  const crown = new THREE.SphereGeometry(1, 36, 24, 0, Math.PI * 2, 0, Math.PI * 0.58);
+  const cp = crown.attributes.position;
+  for (let i = 0; i < cp.count; i++) {
+    const x = cp.getX(i);
+    const y = cp.getY(i);
+    const z = cp.getZ(i);
+    cp.setXYZ(i, x * 0.084, y * 0.088, z * 0.098);
+  }
+  crown.translate(0, 1.636, -0.016);
+  parts.push(crown);
+
+  // 2. Lateral & Posterior Flow (sides and back falling down to nape of neck)
+  const back = new THREE.CylinderGeometry(0.084, 0.076, 0.14, 32, 14, true, Math.PI * 0.70, Math.PI * 1.6);
+  const bp = back.attributes.position;
+  for (let i = 0; i < bp.count; i++) {
+    const x = bp.getX(i);
+    const y = bp.getY(i);
+    const z = bp.getZ(i);
+    const taper = 1.0 - 0.10 * Math.abs(y / 0.07);
+    bp.setXYZ(i, x * taper, y, z * 1.02);
+  }
+  back.translate(0, 1.555, -0.024);
+  parts.push(back);
+
+  // 3. Elegant Left & Right Front Framing Locks
+  for (const sign of [-1, 1]) {
+    const lockCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(sign * 0.072, 1.630, 0.040),
+      new THREE.Vector3(sign * 0.078, 1.585, 0.052),
+      new THREE.Vector3(sign * 0.074, 1.535, 0.042),
+      new THREE.Vector3(sign * 0.066, 1.490, 0.022),
+    ]);
+    const lock = new THREE.TubeGeometry(lockCurve, 20, 0.009, 10, false);
+    parts.push(lock);
+  }
+
+  const merged = mergeBufferGeometries(parts);
+  merged.computeBoundingBox();
+  return merged;
 }
 
 /* ------------------------------------------------------------------------- *

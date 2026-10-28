@@ -52,6 +52,21 @@ export const App: React.FC = () => {
         setSearchOpen(true);
       } else if (e.key === 'r' || e.key === 'R') {
         triggerResetCamera();
+      } else if (e.key === 'h' || e.key === 'H') {
+        const currentMode = useAnatomyStore.getState().interactionMode;
+        useAnatomyStore.getState().setInteractionMode(currentMode === 'rotate' ? 'pan' : 'rotate');
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        useAnatomyStore.getState().triggerPan(0, -30);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        useAnatomyStore.getState().triggerPan(0, 30);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        useAnatomyStore.getState().triggerPan(-30, 0);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        useAnatomyStore.getState().triggerPan(30, 0);
       } else if (e.key === '+' || e.key === '=') {
         triggerZoomIn();
       } else if (e.key === '-' || e.key === '_') {

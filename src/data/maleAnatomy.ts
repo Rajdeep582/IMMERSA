@@ -67,6 +67,7 @@ export const MALE_BINARY_SPECIFIC_IDS = [
   'FJ3637', // right superficial dorsal vein of penis
   'FJ3148', // male urethra
   'FJ2815', // male pubic hair patch (wrong surface pattern for the female model)
+  'FJ2813', // male cropped head hair (replaced on female model by feminine hair F_HAIR)
 ];
 
 export const MALE_CLINICAL_PROFILES: Record<string, ClinicalProfile> = {

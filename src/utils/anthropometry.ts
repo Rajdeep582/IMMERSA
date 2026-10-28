@@ -6,19 +6,24 @@ import * as THREE from 'three';
  * Grounded in scientifically documented adult human sexual dimorphism derived
  * from the ANSUR II anthropometric dataset, NASA-STD-3000, and Gray's Anatomy
  * (42nd ed.):
- * - Craniofacial: Slender cervical column, softened thyroid cartilage (no
- *   Adam's apple), oval mandibular taper, feminine malar prominence and smooth
- *   forehead contour.
+ * - Craniofacial: Graceful, slender cervical column, softened thyroid cartilage (no
+ *   Adam's apple), smooth oval mandibular taper, feminine malar fullness, and smooth,
+ *   vertical forehead contour without supraorbital bossing.
  * - Thorax & Breasts: Natural anatomical teardrop ptosis with rounded lower pole,
- *   inframammary crease (IMF), sternal cleavage, and seamlessly integrated
- *   areolar dome and papilla.
+ *   inframammary crease (IMF), sternal cleavage, and harmonious integration
+ *   with procedural areola/nipple and mammary gland complexes.
  * - Waist & Pelvis: Authentic female waist-to-hip ratio (~0.72-0.74), gynecoid
  *   pelvic flare, widened intertrochanteric breadth, and rounded gluteal contours.
- * - External Genitalia: Natural perineal ramp with smooth mons pubis, symmetrical
- *   labia majora, and central pudendal cleft, cleanly retracting any male penile
- *   tissue without planar distortion or self-intersection.
+ * - External Genitalia: Natural perineal floor with clean retraction of male
+ *   protrusion, seamlessly seating the anatomically accurate procedural vulvar
+ *   structures (mons pubis, labia majora/minora, clitoral hood/glans).
  * - Extremities: Q-angle femoral convergence, carrying angle, and slender calves.
  */
+
+function smoothstep(e0: number, e1: number, val: number): number {
+  const t = Math.max(0, Math.min(1, (val - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
 
 export function applyFemaleMorph(
   x: number,
@@ -51,87 +56,72 @@ export function applyFemaleMorph(
     const armCenterX = armSign * (0.24 - 0.028 * factor);
     dx -= (x - armCenterX) * 0.11 * factor;
   } else if (!isLeg) {
-    if (curY > 1.44) {
-      // 1. Craniofacial scaling: adult female cranium is ~7% narrower and ~5% shallower AP.
-      dx -= x * 0.07 * factor;
-      dz -= z * 0.05 * factor;
+    if (curY > 1.48) {
+      // 1. Craniofacial scaling: adult female cranium is ~6% narrower and ~4% shallower AP.
+      dx -= x * 0.06 * factor;
+      dz -= (z - 0.01) * 0.04 * factor;
 
-      // 2. Cervical column (neck) slenderizing
-      if (curY < 1.50) {
-        const neckProg = (1.50 - curY) / 0.06;
-        const neckSmooth = neckProg * neckProg * (3 - 2 * neckProg);
-        dx -= x * 0.05 * neckSmooth * factor;
-        dz -= z * 0.03 * neckSmooth * factor;
+      // 2. Mandibular taper: soften square masculine jaw into an elegant, feminine oval contour
+      if (curY >= 1.46 && curY <= 1.56) {
+        const jProg = (curY - 1.46) / 0.10;
+        const jProf = Math.sin(Math.PI * jProg);
+        dx -= x * 0.07 * jProf * factor;
+        if (z > 0.03) {
+          dz -= 0.003 * jProf * factor;
+        }
+      }
 
-        // Smooth elimination of the laryngeal prominence (Adam's apple)
+      // 3. Smooth vertical feminine forehead contour (softening supraorbital bossing across brow)
+      if (curY >= 1.58 && curY <= 1.66 && z > 0.035) {
+        const browProg = Math.sin(((curY - 1.58) / 0.08) * Math.PI);
+        const browAnt = Math.min(1.0, (z - 0.035) / 0.035);
+        const browSmooth = browAnt * browAnt * (3.0 - 2.0 * browAnt);
+        dz -= 0.0045 * browProg * browSmooth * factor;
+      }
+    } else if (curY > 1.38) {
+      // Cervical column (neck) continuous taper
+      const neckProg = Math.min(1.0, Math.max(0.0, (1.50 - curY) / 0.12));
+      const neckFactor = neckProg * neckProg * (3.0 - 2.0 * neckProg);
+      dx -= x * 0.05 * neckFactor * factor;
+      dz -= z * 0.04 * neckFactor * factor;
+
+      // Smooth reduction of thyroid cartilage prominence (Adam's apple)
+      if (curY >= 1.44 && curY <= 1.50 && z > 0.020) {
         const yNorm = (curY - 1.44) / 0.06;
         const yProf = Math.sin(Math.PI * yNorm);
-        const zAnt = Math.max(0, Math.min(1, (z - 0.015) / 0.030));
-        const zAntSmooth = zAnt * zAnt * (3 - 2 * zAnt);
-        dz -= 0.009 * yProf * zAntSmooth * factor;
+        const zAnt = Math.min(1.0, (z - 0.020) / 0.025);
+        const zAntSmooth = zAnt * zAnt * (3.0 - 2.0 * zAnt);
+        dz -= 0.0045 * yProf * zAntSmooth * factor;
       }
-
-      // 3. Mandibular taper: soften square masculine jaw into an elegant, feminine oval contour
-      if (curY >= 1.48 && curY <= 1.56) {
-        const jProg = (curY - 1.48) / 0.08;
-        const jProf = Math.sin(Math.PI * jProg);
-        dx -= x * 0.05 * jProf * factor;
-      }
-
-      // 4. Soft feminine chin (mental protuberance refinement)
-      if (curY >= 1.495 && curY <= 1.530) {
-        const chinZ = Math.max(0, Math.min(1, (z - 0.045) / 0.025));
-        const chinZSmooth = chinZ * chinZ * (3 - 2 * chinZ);
-        const chin = Math.exp(-Math.pow(x / 0.032, 2) - Math.pow((curY - 1.512) / 0.016, 2)) * chinZSmooth;
-        dx -= x * 0.08 * chin * factor;
-        dz -= 0.0035 * chin * factor;
-      }
-
-      // 5. High feminine malar cheekbones
-      if (curY >= 1.560 && curY <= 1.620) {
-        const malarZ = Math.max(0, Math.min(1, (z - 0.020) / 0.030));
-        const malarZSmooth = malarZ * malarZ * (3 - 2 * malarZ);
-        const malar = Math.exp(-Math.pow((Math.abs(x) - 0.046) / 0.018, 2) - Math.pow((curY - 1.585) / 0.024, 2)) * malarZSmooth;
-        dz += 0.0035 * malar * factor;
-        dx += Math.sign(x) * 0.0020 * malar * factor;
-      }
-
-      // 6. Smooth vertical feminine forehead contour (softening supraorbital bossing)
-      if (curY >= 1.605 && curY <= 1.655) {
-        const browZ = Math.max(0, Math.min(1, (z - 0.035) / 0.030));
-        const browZSmooth = browZ * browZ * (3 - 2 * browZ);
-        const brow = Math.exp(-Math.pow(x / 0.055, 2) - Math.pow((curY - 1.625) / 0.018, 2)) * browZSmooth;
-        dz -= 0.0040 * brow * factor;
-      }
-    } else if (curY > 1.34) {
-      // Biacromial breadth: about 12-15% narrower than the male reference.
-      const shoulderFactor = (curY - 1.34) / 0.10;
-      dx -= x * (0.12 + 0.06 * shoulderFactor) * factor;
-      dz -= z * 0.07 * factor;
+    } else if (curY > 1.26) {
+      // Biacromial breadth: narrower female shoulder girdle
+      const shoulderFactor = (curY - 1.26) / 0.16;
+      const shoulderSmooth = shoulderFactor * shoulderFactor * (3.0 - 2.0 * shoulderFactor);
+      dx -= x * (0.10 + 0.04 * shoulderSmooth) * factor;
+      dz -= z * 0.06 * factor;
     } else if (curY > 1.16) {
-      // Thorax: narrower transverse diameter and slightly reduced AP depth.
+      // Thorax: narrower transverse diameter
       dx -= x * 0.10 * factor;
       if (z < 0.11) {
-        dz -= z * 0.08 * factor;
+        dz -= z * 0.07 * factor;
       }
-    } else if (curY > 1.00) {
-      // Lumbar waist: female waist-to-hip ratio is typically 0.72-0.80.
-      const waistProfile = Math.sin(((curY - 1.00) / 0.16) * Math.PI);
-      dx -= x * (0.09 + 0.12 * waistProfile) * factor;
-      dz -= z * (0.05 + 0.05 * waistProfile) * factor;
+    } else if (curY > 0.98) {
+      // Lumbar waist: authentic female waist-to-hip ratio (~0.73)
+      const waistProfile = Math.sin(((curY - 0.98) / 0.18) * Math.PI);
+      dx -= x * (0.08 + 0.12 * waistProfile) * factor;
+      dz -= z * (0.04 + 0.04 * waistProfile) * factor;
     }
   }
 
-  // Gynecoid pelvis: wider iliac crests, greater intertrochanteric breadth,
-  // flared alae, wider subpubic angle and anterior pelvic tilt.
-  if (curY >= 0.78 && curY <= 1.02) {
-    const hipProfile = Math.sin(((curY - 0.78) / 0.24) * Math.PI);
+  // Gynecoid pelvis: wider iliac crests, greater intertrochanteric breadth
+  if (curY >= 0.76 && curY <= 1.02) {
+    const hipProfile = Math.sin(((curY - 0.76) / 0.26) * Math.PI);
     dx += x * 0.13 * hipProfile * factor;
     if (curY < 0.92 && Math.abs(x) < 0.075) {
       dx += Math.sign(x) * 0.012 * (1 - Math.abs(x) / 0.075) * factor;
     }
     if (z < 0) {
-      dz -= Math.abs(z) * 0.10 * hipProfile * factor;
+      dz -= Math.abs(z) * 0.09 * hipProfile * factor;
     }
   }
 
@@ -183,9 +173,9 @@ export function applyFemaleMorph(
 }
 
 /**
- * Female surface detail that is not appropriate for internal organs: breast
- * contour, mons pubis, gluteal fullness and removal of the male external
- * genital surface. It is applied only to the body-skin mesh (uIsSkin = 1).
+ * Female surface detail applied to the outer skin mesh: natural breast
+ * contour, gluteal fullness, and clean retraction of the male external
+ * genital surface.
  */
 export function applyFemaleSurface(
   x: number,
@@ -200,79 +190,46 @@ export function applyFemaleSurface(
   let nz = z;
 
   // 1. ADULT FEMALE MAMMARY GLAND (BREAST) CONTOUR
-  // Base: Ribs 2 to 6 (Y: 1.13 to 1.33 m), sternal border (X: 0.024 m) to anterior axillary line.
-  // Apex centered at X = +-0.080 m, Y = 1.222 m.
+  // Base: Ribs 2 to 6 (Y: 1.13 to 1.34 m), sternal border to anterior axillary line.
+  // Centered at X = +-0.078 m, Y = 1.246 m.
   const ax = Math.abs(nx);
-  if (ax > 0.015 && ax < 0.180 && ny > 1.120 && ny < 1.340 && nz > 0.010) {
-    const bx = ax - 0.080;
-    const by = ny - 1.222;
-    // Anatomical teardrop ptosis: upper pole (by > 0) has a gentle incline (sigma 0.082 m);
-    // lower pole (by < 0) has a full, rounded supported projection (sigma 0.058 m).
-    const sigmaY = by > 0 ? 0.082 : 0.058;
+  if (ax > 0.015 && ax < 0.180 && ny > 1.130 && ny < 1.340 && nz > 0.010) {
+    const bx = ax - 0.078;
+    const by = ny - 1.246;
+    // Anatomical teardrop ptosis: upper pole (by > 0) has gentle incline (sigma 0.080 m);
+    // lower pole (by < 0) has full, rounded supported projection (sigma 0.056 m).
+    const sigmaY = by > 0 ? 0.080 : 0.056;
     const r2 = (bx * bx) / (0.052 * 0.052) + (by * by) / (sigmaY * sigmaY);
-    
+
     // Natural breast elevation (up to 4.6 cm forward projection at apex)
-    const anterior = Math.min(1, Math.max(0, (nz - 0.020) / 0.080));
+    const anterior = Math.min(1, Math.max(0, (nz - 0.015) / 0.080));
     const breastMound = Math.exp(-r2) * anterior * 0.046 * factor;
+    nz += breastMound;
 
-    // Integrated Areola & Nipple:
-    // Areola: subtle 1.8mm elevation within 20mm radius
-    const rApex = Math.sqrt(bx * bx + by * by);
-    const areolaElev = 0.0018 * Math.exp(-Math.pow(rApex / 0.020, 2)) * factor;
-    // Nipple: rounded 4.2mm projection within 5.5mm radius
-    const nippleElev = 0.0042 * Math.exp(-Math.pow(rApex / 0.0055, 2)) * factor;
-
-    nz += breastMound + areolaElev + nippleElev;
-
-    // Sternal cleavage preservation: ensure clean anatomical depression between breasts
-    const sternum = Math.exp(-Math.pow(nx / 0.022, 2)) * Math.exp(-Math.pow(by / 0.080, 2)) * anterior;
-    nz -= sternum * 0.012 * factor;
+    // Sternal cleavage preservation: gentle anatomical depression between breasts
+    const sternum = Math.exp(-Math.pow(nx / 0.024, 2)) * Math.exp(-Math.pow(by / 0.080, 2)) * anterior;
+    nz -= sternum * 0.007 * factor;
 
     // Inframammary fold: natural sub-mammary crease at ribs 5-6
     if (by < -0.045 && by > -0.090) {
       const imfProgress = Math.min(1, Math.max(0, (by + 0.090) / 0.045));
-      const imfCrease = Math.sin(imfProgress * Math.PI) * Math.exp(-Math.pow(bx / 0.040, 2));
-      nz -= imfCrease * 0.006 * factor;
+      const imfCrease = Math.sin(imfProgress * Math.PI) * Math.exp(-Math.pow(bx / 0.042, 2));
+      nz -= imfCrease * 0.004 * factor;
     }
   }
 
-  // 2. ADULT FEMALE EXTERNAL GENITALIA (VULVA & PERINEUM)
-  // Replaces the male penile protrusion with an authentic, continuous female vulvar surface:
-  // Mons pubis -> labia majora & pudendal cleft -> posterior perineal body.
+  // 2. RETRACT MALE PENILE PROTRUSION ON SKIN MESH
+  // Retracts male genital volume flush with the natural anterior pelvic floor,
+  // providing a clean, seamless base for the procedural female external genitalia.
   const absX = Math.abs(nx);
   if (absX < 0.055 && ny >= 0.730 && ny <= 0.895) {
-    // Natural female anatomical perineal ramp: Z smoothly descends from mons pubis (0.074) to perineum (0.035)
-    const baseZ = 0.035 + Math.max(0, Math.min(1, (ny - 0.735) / 0.150)) * 0.039;
-
-    // Smooth lateral transition connecting to medial thighs
-    const smoothstep = (e0: number, e1: number, val: number) => {
-      const t = Math.max(0, Math.min(1, (val - e0) / (e1 - e0)));
-      return t * t * (3 - 2 * t);
-    };
+    const targetZ = 0.038 + Math.max(0, Math.min(1, (ny - 0.735) / 0.150)) * 0.034;
     const latFade = 1.0 - smoothstep(0.025, 0.050, absX);
     const vertFade = smoothstep(0.730, 0.750, ny) * (1.0 - smoothstep(0.875, 0.895, ny));
     const vulvaZone = latFade * vertFade;
 
-    if (vulvaZone > 0.001) {
-      // Mons Pubis: smooth rounded triangular cushion anterior to pubic symphysis (Y ~ 0.865)
-      const monsRelief = 0.011 * Math.exp(-Math.pow(nx / 0.036, 2) - Math.pow((ny - 0.865) / 0.025, 2));
-
-      // Labia Majora: two smooth longitudinal cutaneous folds (Y: 0.76 to 0.84, X: +-0.016)
-      const yProg = Math.max(0, Math.min(1, (ny - 0.750) / 0.095));
-      const labiaEnvelope = Math.sin(yProg * Math.PI);
-      const labiaRelief = 0.007 * (Math.exp(-Math.pow((nx - 0.016) / 0.010, 2)) + Math.exp(-Math.pow((nx + 0.016) / 0.010, 2))) * labiaEnvelope;
-
-      // Pudendal Cleft (Rima pudendi): delicate central median groove between the labia
-      const cleftRelief = 0.0045 * Math.exp(-Math.pow(nx / 0.0065, 2)) * labiaEnvelope;
-
-      const targetZ = baseZ + monsRelief + labiaRelief - cleftRelief;
-
-      // Retract any male penile tissue back onto the authentic female vulva surface
-      if (nz > targetZ) {
-        nz = nz * (1.0 - vulvaZone * factor) + targetZ * (vulvaZone * factor);
-      } else {
-        nz += (monsRelief + labiaRelief - cleftRelief) * vulvaZone * factor;
-      }
+    if (vulvaZone > 0.001 && nz > targetZ) {
+      nz = nz * (1.0 - vulvaZone * factor) + targetZ * (vulvaZone * factor);
     }
   }
 
@@ -326,52 +283,35 @@ vec3 applyFemaleSurface(vec3 p, float factor) {
   float nz = p.z;
 
   // 1. ADULT FEMALE MAMMARY GLAND (BREAST) CONTOUR
-  if (ax > 0.015 && ax < 0.180 && p.y > 1.120 && p.y < 1.340 && p.z > 0.010) {
-    float bx = ax - 0.080;
-    float by = p.y - 1.222;
-    float sigmaY = by > 0.0 ? 0.082 : 0.058;
+  if (ax > 0.015 && ax < 0.180 && p.y > 1.130 && p.y < 1.340 && p.z > 0.010) {
+    float bx = ax - 0.078;
+    float by = p.y - 1.246;
+    float sigmaY = by > 0.0 ? 0.080 : 0.056;
     float r2 = (bx * bx) / (0.052 * 0.052) + (by * by) / (sigmaY * sigmaY);
-    
-    float anterior = clamp((p.z - 0.020) / 0.080, 0.0, 1.0);
+
+    float anterior = clamp((p.z - 0.015) / 0.080, 0.0, 1.0);
     float breastMound = exp(-r2) * anterior * 0.046 * factor;
+    nz += breastMound;
 
-    float rApex = sqrt(bx * bx + by * by);
-    float areolaElev = 0.0018 * exp(-pow(rApex / 0.020, 2.0)) * factor;
-    float nippleElev = 0.0042 * exp(-pow(rApex / 0.0055, 2.0)) * factor;
-
-    nz += breastMound + areolaElev + nippleElev;
-
-    float sternum = exp(-pow(p.x / 0.022, 2.0)) * exp(-pow(by / 0.080, 2.0)) * anterior;
-    nz -= sternum * 0.012 * factor;
+    float sternum = exp(-pow(p.x / 0.024, 2.0)) * exp(-pow(by / 0.080, 2.0)) * anterior;
+    nz -= sternum * 0.007 * factor;
 
     if (by < -0.045 && by > -0.090) {
       float imfProgress = clamp((by + 0.090) / 0.045, 0.0, 1.0);
-      float imfCrease = sin(imfProgress * 3.14159265) * exp(-pow(bx / 0.040, 2.0));
-      nz -= imfCrease * 0.006 * factor;
+      float imfCrease = sin(imfProgress * 3.14159265) * exp(-pow(bx / 0.042, 2.0));
+      nz -= imfCrease * 0.004 * factor;
     }
   }
 
-  // 2. ADULT FEMALE EXTERNAL GENITALIA (VULVA & PERINEUM)
+  // 2. RETRACT MALE PENILE PROTRUSION ON SKIN MESH
   if (ax < 0.055 && p.y >= 0.730 && p.y <= 0.895) {
-    float baseZ = 0.035 + clamp((p.y - 0.735) / 0.150, 0.0, 1.0) * 0.039;
+    float targetZ = 0.038 + clamp((p.y - 0.735) / 0.150, 0.0, 1.0) * 0.034;
     float latFade = 1.0 - smoothstep(0.025, 0.050, ax);
     float vertFade = smoothstep(0.730, 0.750, p.y) * (1.0 - smoothstep(0.875, 0.895, p.y));
     float vulvaZone = latFade * vertFade;
 
-    if (vulvaZone > 0.001) {
-      float monsRelief = 0.011 * exp(-pow(p.x / 0.036, 2.0) - pow((p.y - 0.865) / 0.025, 2.0));
-      float yProg = clamp((p.y - 0.750) / 0.095, 0.0, 1.0);
-      float labiaEnvelope = sin(yProg * 3.14159265);
-      float labiaRelief = 0.007 * (exp(-pow((p.x - 0.016) / 0.010, 2.0)) + exp(-pow((p.x + 0.016) / 0.010, 2.0))) * labiaEnvelope;
-      float cleftRelief = 0.0045 * exp(-pow(p.x / 0.0065, 2.0)) * labiaEnvelope;
-
-      float targetZ = baseZ + monsRelief + labiaRelief - cleftRelief;
-
-      if (nz > targetZ) {
-        nz = mix(nz, targetZ, vulvaZone * factor);
-      } else {
-        nz += (monsRelief + labiaRelief - cleftRelief) * vulvaZone * factor;
-      }
+    if (vulvaZone > 0.001 && nz > targetZ) {
+      nz = mix(nz, targetZ, vulvaZone * factor);
     }
   }
 
@@ -403,81 +343,72 @@ vec3 applyFemaleMorph(vec3 p, float factor, float isMuscle) {
     float armCenterX = armSign * (0.24 - 0.028 * factor);
     dx -= (p.x - armCenterX) * 0.11 * factor;
   } else if (!isLeg) {
-    if (curY > 1.44) {
-      dx -= p.x * 0.07 * factor;
-      dz -= p.z * 0.05 * factor;
-
-      // 1. Cervical column (neck) slenderizing
-      if (curY < 1.50) {
-        float neckProg = (1.50 - curY) / 0.06;
-        float neckSmooth = neckProg * neckProg * (3.0 - 2.0 * neckProg);
-        dx -= p.x * 0.05 * neckSmooth * factor;
-        dz -= p.z * 0.03 * neckSmooth * factor;
-
-        // Smooth elimination of the laryngeal prominence (Adam's apple)
-        float yNorm = (curY - 1.44) / 0.06;
-        float yProf = sin(3.14159265 * yNorm);
-        float zAnt = clamp((p.z - 0.015) / 0.030, 0.0, 1.0);
-        float zAntSmooth = zAnt * zAnt * (3.0 - 2.0 * zAnt);
-        dz -= 0.009 * yProf * zAntSmooth * factor;
-      }
+    if (curY > 1.48) {
+      // 1. Craniofacial scaling: adult female cranium is ~6% narrower and ~4% shallower AP.
+      dx -= p.x * 0.06 * factor;
+      dz -= (p.z - 0.01) * 0.04 * factor;
 
       // 2. Mandibular taper: soften square masculine jaw into an elegant, feminine oval contour
-      if (curY >= 1.48 && curY <= 1.56) {
-        float jProg = (curY - 1.48) / 0.08;
+      if (curY >= 1.46 && curY <= 1.56) {
+        float jProg = (curY - 1.46) / 0.10;
         float jProf = sin(3.14159265 * jProg);
-        dx -= p.x * 0.05 * jProf * factor;
+        dx -= p.x * 0.07 * jProf * factor;
+        if (p.z > 0.03) {
+          dz -= 0.003 * jProf * factor;
+        }
       }
 
-      // 3. Soft feminine chin
-      if (curY >= 1.495 && curY <= 1.530) {
-        float chinZ = clamp((p.z - 0.045) / 0.025, 0.0, 1.0);
-        float chinZSmooth = chinZ * chinZ * (3.0 - 2.0 * chinZ);
-        float chin = exp(-pow(p.x / 0.032, 2.0) - pow((curY - 1.512) / 0.016, 2.0)) * chinZSmooth;
-        dx -= p.x * 0.08 * chin * factor;
-        dz -= 0.0035 * chin * factor;
+      // 3. Smooth vertical feminine forehead contour (softening supraorbital bossing across brow)
+      if (curY >= 1.58 && curY <= 1.66 && p.z > 0.035) {
+        float browProg = sin(((curY - 1.58) / 0.08) * 3.14159265);
+        float browAnt = clamp((p.z - 0.035) / 0.035, 0.0, 1.0);
+        float browSmooth = browAnt * browAnt * (3.0 - 2.0 * browAnt);
+        dz -= 0.0045 * browProg * browSmooth * factor;
       }
+    } else if (curY > 1.38) {
+      // Cervical column (neck) continuous taper
+      float neckProg = clamp((1.50 - curY) / 0.12, 0.0, 1.0);
+      float neckFactor = neckProg * neckProg * (3.0 - 2.0 * neckProg);
+      dx -= p.x * 0.05 * neckFactor * factor;
+      dz -= p.z * 0.04 * neckFactor * factor;
 
-      // 4. High feminine malar cheekbones
-      if (curY >= 1.560 && curY <= 1.620) {
-        float malarZ = clamp((p.z - 0.020) / 0.030, 0.0, 1.0);
-        float malarZSmooth = malarZ * malarZ * (3.0 - 2.0 * malarZ);
-        float malar = exp(-pow((abs(p.x) - 0.046) / 0.018, 2.0) - pow((curY - 1.585) / 0.024, 2.0)) * malarZSmooth;
-        dz += 0.0035 * malar * factor;
-        dx += sign(p.x) * 0.0020 * malar * factor;
+      // Smooth reduction of thyroid cartilage prominence (Adam's apple)
+      if (curY >= 1.44 && curY <= 1.50 && p.z > 0.020) {
+        float yNorm = (curY - 1.44) / 0.06;
+        float yProf = sin(3.14159265 * yNorm);
+        float zAnt = clamp((p.z - 0.020) / 0.025, 0.0, 1.0);
+        float zAntSmooth = zAnt * zAnt * (3.0 - 2.0 * zAnt);
+        dz -= 0.0045 * yProf * zAntSmooth * factor;
       }
-
-      // 5. Smooth vertical feminine forehead contour
-      if (curY >= 1.605 && curY <= 1.655) {
-        float browZ = clamp((p.z - 0.035) / 0.030, 0.0, 1.0);
-        float browZSmooth = browZ * browZ * (3.0 - 2.0 * browZ);
-        float brow = exp(-pow(p.x / 0.055, 2.0) - pow((curY - 1.625) / 0.018, 2.0)) * browZSmooth;
-        dz -= 0.0040 * brow * factor;
-      }
-    } else if (curY > 1.34) {
-      float shoulderFactor = (curY - 1.34) / 0.10;
-      dx -= p.x * (0.12 + 0.06 * shoulderFactor) * factor;
-      dz -= p.z * 0.07 * factor;
+    } else if (curY > 1.26) {
+      // Biacromial breadth: narrower female shoulder girdle
+      float shoulderFactor = (curY - 1.26) / 0.16;
+      float shoulderSmooth = shoulderFactor * shoulderFactor * (3.0 - 2.0 * shoulderFactor);
+      dx -= p.x * (0.10 + 0.04 * shoulderSmooth) * factor;
+      dz -= p.z * 0.06 * factor;
     } else if (curY > 1.16) {
+      // Thorax: narrower transverse diameter
       dx -= p.x * 0.10 * factor;
       if (p.z < 0.11) {
-        dz -= p.z * 0.08 * factor;
+        dz -= p.z * 0.07 * factor;
       }
-    } else if (curY > 1.00) {
-      float waistProfile = sin(((curY - 1.00) / 0.16) * 3.14159265);
-      dx -= p.x * (0.09 + 0.12 * waistProfile) * factor;
-      dz -= p.z * (0.05 + 0.05 * waistProfile) * factor;
+    } else if (curY > 0.98) {
+      // Lumbar waist: authentic female waist-to-hip ratio (~0.73)
+      float waistProfile = sin(((curY - 0.98) / 0.18) * 3.14159265);
+      dx -= p.x * (0.08 + 0.12 * waistProfile) * factor;
+      dz -= p.z * (0.04 + 0.04 * waistProfile) * factor;
     }
   }
 
-  if (curY >= 0.78 && curY <= 1.02) {
-    float hipProfile = sin(((curY - 0.78) / 0.24) * 3.14159265);
+  // Gynecoid pelvis: wider iliac crests, greater intertrochanteric breadth
+  if (curY >= 0.76 && curY <= 1.02) {
+    float hipProfile = sin(((curY - 0.76) / 0.26) * 3.14159265);
     dx += p.x * 0.13 * hipProfile * factor;
     if (curY < 0.92 && abs(p.x) < 0.075) {
       dx += sign(p.x) * 0.012 * (1.0 - abs(p.x) / 0.075) * factor;
     }
     if (p.z < 0.0) {
-      dz -= abs(p.z) * 0.10 * hipProfile * factor;
+      dz -= abs(p.z) * 0.09 * hipProfile * factor;
     }
   }
 

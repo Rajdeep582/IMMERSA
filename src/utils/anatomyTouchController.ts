@@ -18,38 +18,49 @@ interface TouchPoint {
   startX: number;
   startY: number;
   startTime: number;
+  button: number; // 0: primary (left), 1: auxiliary (middle), 2: secondary (right)
+  pointerType: 'mouse' | 'touch' | 'pen';
 }
 
 export class AnatomyTouchController {
   private camera: THREE.PerspectiveCamera;
   private domElement: HTMLElement;
+  private scene?: THREE.Scene;
   private raycaster: THREE.Raycaster;
 
-  // Authoritative camera state
+  // Authoritative camera lookAt target (point around which camera orbits and zooms)
   public target: THREE.Vector3 = new THREE.Vector3(0, 0.865, 0);
   private spherical: THREE.Spherical = new THREE.Spherical();
   private targetSpherical: THREE.Spherical = new THREE.Spherical();
 
-  // Damping and velocities
-  private sphericalDelta: THREE.Spherical = new THREE.Spherical();
-  private panOffset: THREE.Vector3 = new THREE.Vector3();
+  // Interaction Mode: 'rotate' (default orbit) or 'pan' (model translation)
+  public interactionMode: 'rotate' | 'pan' = 'rotate';
 
   // Multi-touch tracking
   private activeTouches: Map<number, TouchPoint> = new Map();
   private prevPinchDistance = 0;
   private prevPinchCenter = new THREE.Vector2();
-  private isGestureActive = false;
-  private touchMode: 'none' | 'rotate' | 'pinch_pan' = 'none';
+  public isGestureActive = false;
 
-  // Tuned sensitivities
-  private readonly touchRotateSpeed = 0.0028; // Radians per pixel (controlled, non-aggressive)
-  private readonly mouseRotateSpeed = 0.0035;
-  private readonly dampingFactor = 0.085;     // Smooth rotation settling
-  private readonly zoomDampingFactor = 0.24;  // Fast, responsive zoom tracking
-  private readonly minDistance = 0.035;       // Prevent clipping
-  private readonly maxDistance = 6.5;
-  private readonly minPolarAngle = 0.05;      // Prevent gimbal lock
-  private readonly maxPolarAngle = Math.PI * 0.95;
+  // Tuned sensitivities & limits
+  private readonly touchRotateSpeed = 0.0042; // Radians per pixel for touch
+  private readonly mouseRotateSpeed = 0.0038; // Radians per pixel for mouse
+  private readonly dampingFactor = 0.095;     // Smooth rotation settling
+  private readonly zoomDampingFactor = 0.22;  // Fast, responsive zoom tracking
+  private readonly minDistance = 0.035;       // 35mm micro inspection minimum
+  private readonly maxDistance = 6.5;         // 6.5m maximum zoom-out distance
+  private readonly minPolarAngle = 0.02;      // Near zenith (top-down superior view)
+  private readonly maxPolarAngle = Math.PI - 0.02; // Near nadir (bottom-up inferior view)
+
+  // Anatomical target panning boundaries (prevents user from flinging camera to infinity)
+  private readonly panBounds = {
+    minX: -2.2,
+    maxX: 2.2,
+    minY: -1.0,
+    maxY: 2.6,
+    minZ: -2.2,
+    maxZ: 2.2,
+  };
 
   // Active smooth transitions
   private activeTransition: CameraTransition | null = null;
@@ -62,17 +73,33 @@ export class AnatomyTouchController {
   public onChange?: () => void;
   public onSelectHit?: (x: number, y: number) => void;
 
-  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
+  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, scene?: THREE.Scene) {
     this.camera = camera;
     this.domElement = domElement;
+    this.scene = scene;
     this.raycaster = new THREE.Raycaster();
 
-    // Ensure touch-action is strictly none on the 3D canvas so browser gestures never fight WebGL
+    // Prevent default browser touch scrolling/pinching inside the 3D viewport canvas
     this.domElement.style.touchAction = 'none';
+    this.updateCursor();
 
     // Synchronize initial spherical coordinates from camera
     this.syncFromCamera();
     this.bindEvents();
+  }
+
+  public setInteractionMode(mode: 'rotate' | 'pan'): void {
+    this.interactionMode = mode;
+    this.updateCursor();
+  }
+
+  public getInteractionMode(): 'rotate' | 'pan' {
+    return this.interactionMode;
+  }
+
+  private updateCursor(): void {
+    if (!this.domElement) return;
+    this.domElement.style.cursor = this.interactionMode === 'pan' ? 'all-scroll' : 'grab';
   }
 
   public syncFromCamera(): void {
@@ -101,22 +128,29 @@ export class AnatomyTouchController {
       try {
         this.domElement.releasePointerCapture(touch.id);
       } catch {
-        // Pointer capture may already have been released by the browser.
+        // Ignored
       }
     });
     this.activeTouches.clear();
   }
 
-  private onContextMenu = (e: Event): void => e.preventDefault();
+  private onContextMenu = (e: Event): void => {
+    // Prevent default browser right-click menu so right-click can be used freely for panning
+    e.preventDefault();
+  };
 
   private onPointerDown = (e: PointerEvent): void => {
-    // If pointer is over interactive UI overlays, don't hijack
+    // Don't hijack clicks on top of UI overlay controls
     if ((e.target as HTMLElement).closest('.ui-interactive-surface')) {
       return;
     }
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
 
-    // Stop any ongoing cinematic camera animation immediately without glitching
+    // Accept primary (0), middle (1), and secondary (2) buttons for mouse
+    if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1 && e.button !== 2) {
+      return;
+    }
+
+    // Stop ongoing transition immediately if user interacts manually
     if (this.activeTransition) {
       this.activeTransition = null;
       this.syncFromCamera();
@@ -129,20 +163,22 @@ export class AnatomyTouchController {
       startX: e.clientX,
       startY: e.clientY,
       startTime: performance.now(),
+      button: e.button,
+      pointerType: e.pointerType as 'mouse' | 'touch' | 'pen',
     });
 
     try {
       this.domElement.setPointerCapture(e.pointerId);
     } catch {
-      // Ignore if pointer capture fails
+      // Ignored
     }
 
-    if (this.activeTouches.size === 1) {
-      this.touchMode = 'rotate';
-      this.isGestureActive = true;
-    } else if (this.activeTouches.size === 2) {
-      this.touchMode = 'pinch_pan';
-      this.isGestureActive = true;
+    this.isGestureActive = true;
+    if (this.domElement) {
+      this.domElement.style.cursor = 'grabbing';
+    }
+
+    if (this.activeTouches.size === 2) {
       this.updatePinchBaseline();
     }
   };
@@ -168,49 +204,68 @@ export class AnatomyTouchController {
     touch.x = e.clientX;
     touch.y = e.clientY;
 
-    if (this.touchMode === 'rotate' && this.activeTouches.size === 1) {
-      // Single finger or left mouse drag: gentle, controlled rotation
-      const deltaX = e.clientX - prevX;
-      const deltaY = e.clientY - prevY;
+    const deltaX = e.clientX - prevX;
+    const deltaY = e.clientY - prevY;
 
-      const speed = e.pointerType === 'touch' ? this.touchRotateSpeed : this.mouseRotateSpeed;
-      // Damped spherical rotation update
-      this.targetSpherical.theta -= deltaX * speed;
-      this.targetSpherical.phi -= deltaY * speed;
-      this.targetSpherical.phi = THREE.MathUtils.clamp(this.targetSpherical.phi, this.minPolarAngle, this.maxPolarAngle);
+    if (this.activeTouches.size === 1) {
+      // Single pointer manipulation (mouse or 1 finger)
+      // PAN CONDITIONS:
+      // - Right mouse button (button 2)
+      // - Middle mouse button (button 1)
+      // - Shift key held on desktop
+      // - Interaction mode explicitly set to 'pan'
+      const isPan =
+        touch.button === 1 ||
+        touch.button === 2 ||
+        e.shiftKey ||
+        this.interactionMode === 'pan';
 
-      this.onChange?.();
-    } else if (this.touchMode === 'pinch_pan' && this.activeTouches.size >= 2) {
-      // Two fingers: Fast, responsive Pinch-to-zoom and two-finger pan
+      if (isPan) {
+        this.pan(deltaX, deltaY);
+      } else {
+        // ROTATE: Orbit horizontally and vertically around the target
+        const speed = e.pointerType === 'touch' ? this.touchRotateSpeed : this.mouseRotateSpeed;
+        this.targetSpherical.theta -= deltaX * speed;
+        this.targetSpherical.phi -= deltaY * speed;
+        this.targetSpherical.phi = THREE.MathUtils.clamp(
+          this.targetSpherical.phi,
+          this.minPolarAngle,
+          this.maxPolarAngle
+        );
+        this.onChange?.();
+      }
+    } else if (this.activeTouches.size >= 2) {
+      // TWO-FINGER GESTURES ON MOBILE & TABLET:
+      // 1. Simultaneous, natural Two-Finger Panning
+      // 2. Smooth Two-Finger Pinch-to-Zoom
       const touches = Array.from(this.activeTouches.values());
       const dx = touches[0].x - touches[1].x;
       const dy = touches[0].y - touches[1].y;
-      const currentPinchDistance = Math.hypot(dx, dy);
-      const currentCenter = new THREE.Vector2((touches[0].x + touches[1].x) * 0.5, (touches[0].y + touches[1].y) * 0.5);
+      const currentDistance = Math.hypot(dx, dy);
+      const currentCenter = new THREE.Vector2(
+        (touches[0].x + touches[1].x) * 0.5,
+        (touches[0].y + touches[1].y) * 0.5
+      );
 
-      if (this.prevPinchDistance > 1 && currentPinchDistance > 1) {
-        const pinchRatio = currentPinchDistance / this.prevPinchDistance;
-        // Fast, punchy pinch zoom responsiveness (4.6x sensitivity)
-        const pinchSensitivity = 4.6;
-        const zoomMultiplier = Math.exp(-Math.log(pinchRatio) * pinchSensitivity);
+      // Two-Finger Pan: translation of the midpoint between fingers
+      const panDeltaX = currentCenter.x - this.prevPinchCenter.x;
+      const panDeltaY = currentCenter.y - this.prevPinchCenter.y;
+      if (Math.hypot(panDeltaX, panDeltaY) > 0.25) {
+        this.pan(panDeltaX, panDeltaY);
+      }
 
+      // Two-Finger Zoom (Pinch): ratio of finger separation
+      if (this.prevPinchDistance > 10 && currentDistance > 10) {
+        const pinchRatio = this.prevPinchDistance / currentDistance;
         this.targetSpherical.radius = THREE.MathUtils.clamp(
-          this.targetSpherical.radius * zoomMultiplier,
+          this.targetSpherical.radius * pinchRatio,
           this.minDistance,
           this.maxDistance
         );
-
-        // Two-finger pan (midpoint translation)
-        const panDeltaX = currentCenter.x - this.prevPinchCenter.x;
-        const panDeltaY = currentCenter.y - this.prevPinchCenter.y;
-        if (Math.hypot(panDeltaX, panDeltaY) > 1.0) {
-          const panFactor = THREE.MathUtils.clamp(this.targetSpherical.radius / 2.0, 0.3, 1.2) * 0.0018;
-          this.applyScreenPan(panDeltaX, panDeltaY, panFactor);
-        }
-
         this.onChange?.();
       }
-      this.prevPinchDistance = currentPinchDistance;
+
+      this.prevPinchDistance = currentDistance;
       this.prevPinchCenter.copy(currentCenter);
     }
   };
@@ -218,10 +273,23 @@ export class AnatomyTouchController {
   private onPointerUp = (e: PointerEvent): void => {
     const touch = this.activeTouches.get(e.pointerId);
     if (touch) {
-      // Tap detection: only trigger structure picking if finger didn't drag significantly
       const totalDist = Math.hypot(e.clientX - touch.startX, e.clientY - touch.startY);
       const totalTime = performance.now() - touch.startTime;
-      if (totalDist < 6 && totalTime < 350 && this.activeTouches.size === 1) {
+
+      // Tap / Click Selection Detection:
+      // - Must be primary button (Left click or Touch tap: touch.button === 0)
+      // - Must NOT be a drag gesture (totalDist < 8 pixels)
+      // - Must NOT be holding Shift (pan modifier)
+      // - Quick tap (< 450ms)
+      // - Must be single pointer
+      // - Distinguishes click/tap from drag in both Rotate and Pan modes
+      if (
+        touch.button === 0 &&
+        !e.shiftKey &&
+        totalDist < 8 &&
+        totalTime < 450 &&
+        this.activeTouches.size === 1
+      ) {
         this.onSelectHit?.(e.clientX, e.clientY);
       }
     }
@@ -229,36 +297,34 @@ export class AnatomyTouchController {
     try {
       this.domElement.releasePointerCapture(e.pointerId);
     } catch {
-      // Ignore
+      // Ignored
     }
 
     this.activeTouches.delete(e.pointerId);
 
     if (this.activeTouches.size === 1) {
-      // Transitioned from 2 fingers down to 1 finger: seamlessly switch to rotate without jump
-      this.touchMode = 'rotate';
       const remaining = Array.from(this.activeTouches.values())[0];
       remaining.startX = remaining.x;
       remaining.startY = remaining.y;
     } else if (this.activeTouches.size === 0) {
-      this.touchMode = 'none';
       this.isGestureActive = false;
+      this.updateCursor();
+    } else {
+      this.updatePinchBaseline();
     }
   };
 
   private onPointerCancel = (e: PointerEvent): void => {
+    try {
+      this.domElement.releasePointerCapture(e.pointerId);
+    } catch {
+      // Ignored
+    }
     this.activeTouches.delete(e.pointerId);
-    if (this.activeTouches.size === 1) {
-      this.touchMode = 'rotate';
-      const remaining = Array.from(this.activeTouches.values())[0];
-      remaining.startX = remaining.x;
-      remaining.startY = remaining.y;
-      this.updatePinchBaseline();
-    } else if (this.activeTouches.size === 0) {
-      this.touchMode = 'none';
+    if (this.activeTouches.size === 0) {
       this.isGestureActive = false;
+      this.updateCursor();
     } else {
-      this.touchMode = 'pinch_pan';
       this.updatePinchBaseline();
     }
   };
@@ -270,48 +336,24 @@ export class AnatomyTouchController {
 
     e.preventDefault();
 
-    // Cancel active transition if user scrolls
     if (this.activeTransition) {
       this.activeTransition = null;
       this.syncFromCamera();
     }
 
     const rect = this.domElement.getBoundingClientRect();
-    const mouseX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const mouseY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-    const deltaScale = e.deltaMode === WheelEvent.DOM_DELTA_LINE
-      ? 28
-      : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+    const deltaScale =
+      e.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 24
+        : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
         ? rect.height
         : 1;
     const delta = e.deltaY * deltaScale;
     const currentRadius = this.targetSpherical.radius;
 
-    // Fast, responsive wheel zoom:
-    // Increased zoom step from 0.0012 to 0.0032 for snappy, rapid zoom travel
-    const zoomStep = 0.0032;
-    const zoomFactor = Math.exp(THREE.MathUtils.clamp(delta * zoomStep, -0.75, 0.75));
-
-    // Pointer-aware raycasting when zooming in
-    if (delta < 0) {
-      this.raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), this.camera);
-      const sceneObjects = this.camera.parent?.children || [];
-      const hits = this.raycaster.intersectObjects(sceneObjects, true);
-
-      let hitPoint: THREE.Vector3 | null = null;
-      for (const hit of hits) {
-        if (hit.object instanceof THREE.Mesh && hit.object.visible && !hit.object.name.includes('ground') && !hit.object.name.includes('platform')) {
-          hitPoint = hit.point;
-          break;
-        }
-      }
-
-      if (hitPoint) {
-        // Shift target smoothly toward hit surface (16% per notch)
-        this.target.lerp(hitPoint, 0.16);
-      }
-    }
+    // Smooth, progressive wheel zoom
+    const zoomStep = 0.0022;
+    const zoomFactor = Math.exp(THREE.MathUtils.clamp(delta * zoomStep, -0.65, 0.65));
 
     this.targetSpherical.radius = THREE.MathUtils.clamp(
       currentRadius * zoomFactor,
@@ -323,7 +365,46 @@ export class AnatomyTouchController {
   };
 
   /**
-   * Rapid discrete zoom-in step (used by toolbar buttons or keyboard shortcuts).
+   * 1:1 Screen-space to World-space Panning.
+   * Moves the lookAt target and camera together so the entire body model
+   * glides smoothly under the cursor or fingers in world coordinates.
+   */
+  public pan(deltaX: number, deltaY: number): void {
+    if (!this.domElement) return;
+
+    // Target distance dictates how much world distance corresponds to 1 screen pixel
+    const targetDistance = this.camera.position.distanceTo(this.target);
+    const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
+    const halfHeight = targetDistance * Math.tan(fovRad * 0.5);
+
+    const clientHeight = this.domElement.clientHeight || window.innerHeight;
+    const factor = (2.0 * halfHeight) / clientHeight;
+
+    // Camera local coordinate axes in world space
+    // vRight is the camera's local X-axis (column 0 of matrixWorld)
+    const vRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    // vUp is the camera's local Y-axis (column 1 of matrixWorld)
+    const vUp = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+
+    // Delta mapping:
+    // deltaX > 0 (dragging right): camera moves left (-vRight) so model shifts right
+    // deltaY > 0 (dragging down): camera moves up (+vUp) so model shifts down
+    const panOffset = new THREE.Vector3();
+    panOffset.addScaledVector(vRight, -deltaX * factor);
+    panOffset.addScaledVector(vUp, deltaY * factor);
+
+    this.target.add(panOffset);
+
+    // Clamp target within generous anatomical envelope
+    this.target.x = THREE.MathUtils.clamp(this.target.x, this.panBounds.minX, this.panBounds.maxX);
+    this.target.y = THREE.MathUtils.clamp(this.target.y, this.panBounds.minY, this.panBounds.maxY);
+    this.target.z = THREE.MathUtils.clamp(this.target.z, this.panBounds.minZ, this.panBounds.maxZ);
+
+    this.onChange?.();
+  }
+
+  /**
+   * Fast discrete zoom-in step (used by toolbar buttons and keyboard shortcuts).
    */
   public zoomIn(factor = 0.72): void {
     if (this.activeTransition) {
@@ -339,7 +420,7 @@ export class AnatomyTouchController {
   }
 
   /**
-   * Rapid discrete zoom-out step.
+   * Fast discrete zoom-out step.
    */
   public zoomOut(factor = 1.38): void {
     if (this.activeTransition) {
@@ -354,23 +435,22 @@ export class AnatomyTouchController {
     this.onChange?.();
   }
 
-  private applyScreenPan(deltaX: number, deltaY: number, factor: number): void {
-    const vLeft = new THREE.Vector3(-1, 0, 0).applyQuaternion(this.camera.quaternion);
-    const vUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-
-    vLeft.multiplyScalar(deltaX * factor);
-    vUp.multiplyScalar(-deltaY * factor);
-
-    this.target.add(vLeft).add(vUp);
+  /**
+   * Resets camera target and orientation to canonical adult whole-body framing.
+   */
+  public resetCamera(durationMs = 800): void {
+    const defaultTarget = new THREE.Vector3(0, 0.865, 0);
+    const defaultEye = new THREE.Vector3(0, 0.88, 3.1);
+    this.transitionTo(defaultEye, defaultTarget, durationMs);
   }
 
   /**
-   * Smoothly transitions camera and lookAt target to frame a structure.
+   * Smoothly transitions camera and lookAt target.
    */
   public transitionTo(
     targetPos: THREE.Vector3,
     targetLookAt: THREE.Vector3,
-    durationMs = 900,
+    durationMs = 850,
     onComplete?: () => void
   ): void {
     this.activeTransition = {
@@ -382,12 +462,13 @@ export class AnatomyTouchController {
       duration: durationMs,
       onComplete,
     };
+    this.onChange?.();
   }
 
   /**
    * Automatically calculates optimal framing for any 3D bounding box.
    */
-  public focusBoundingBox(box: THREE.Box3, preferredAngle?: THREE.Vector3, durationMs = 950): void {
+  public focusBoundingBox(box: THREE.Box3, preferredAngle?: THREE.Vector3, durationMs = 900): void {
     if (box.isEmpty()) return;
 
     const center = box.getCenter(new THREE.Vector3());
@@ -396,7 +477,6 @@ export class AnatomyTouchController {
 
     const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
     let distance = (maxDim / 2) / Math.tan(fovRad / 2);
-    // Add comfortable padding
     distance = Math.max(0.065, distance * 1.65);
 
     const angle = preferredAngle ? preferredAngle.clone().normalize() : new THREE.Vector3(0.2, 0.1, 1).normalize();
@@ -494,4 +574,3 @@ export class AnatomyTouchController {
     return dTheta > 0.0001 || dPhi > 0.0001 || dRadius > 0.0001 || this.autoRotate;
   }
 }
-

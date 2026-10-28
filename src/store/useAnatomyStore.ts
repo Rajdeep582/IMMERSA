@@ -53,6 +53,8 @@ interface AnatomyStoreState {
 
   // View & camera state
   activeView: StandardView;
+  interactionMode: 'rotate' | 'pan';
+  panNonce: { deltaX: number; deltaY: number; nonce: number } | null;
   cameraResetNonce: number;
   zoomInNonce: number;
   zoomOutNonce: number;
@@ -100,6 +102,8 @@ interface AnatomyStoreState {
   setGhostOthers: (ghost: boolean) => void;
 
   setActiveView: (view: StandardView) => void;
+  setInteractionMode: (mode: 'rotate' | 'pan') => void;
+  triggerPan: (deltaX: number, deltaY: number) => void;
   triggerResetCamera: () => void;
   triggerZoomIn: () => void;
   triggerZoomOut: () => void;
@@ -137,6 +141,8 @@ export const useAnatomyStore = create<AnatomyStoreState>((set, get) => ({
   explosionFactor: 0,
 
   activeView: 'isometric',
+  interactionMode: 'rotate',
+  panNonce: null,
   cameraResetNonce: 0,
   zoomInNonce: 0,
   zoomOutNonce: 0,
@@ -330,6 +336,15 @@ export const useAnatomyStore = create<AnatomyStoreState>((set, get) => ({
   setGhostOthers: (ghostOthers) => set({ ghostOthers }),
 
   setActiveView: (view) => set({ activeView: view }),
+  setInteractionMode: (mode) => set({ interactionMode: mode }),
+  triggerPan: (deltaX, deltaY) =>
+    set((state) => ({
+      panNonce: {
+        deltaX,
+        deltaY,
+        nonce: (state.panNonce?.nonce || 0) + 1,
+      },
+    })),
   triggerResetCamera: () => set((state) => ({ cameraResetNonce: state.cameraResetNonce + 1 })),
   triggerZoomIn: () => set((state) => ({ zoomInNonce: state.zoomInNonce + 1 })),
   triggerZoomOut: () => set((state) => ({ zoomOutNonce: state.zoomOutNonce + 1 })),
