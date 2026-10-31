@@ -1,156 +1,69 @@
-import { SystemDefinition, SystemId } from '../types/anatomy';
+import type { SystemId } from './types';
 
-export const ANATOMICAL_SYSTEMS: SystemDefinition[] = [
-  {
-    id: 'skeletal',
-    name: 'Skeletal System',
-    category: 'Structural',
-    color: '#e8dfcb',
-    pbr: { metalness: 0.04, roughness: 0.58 },
-    description: 'Forms the rigid architectural framework of the human body, protects delicate internal organs, facilitates biomechanical leverage, and acts as the primary reservoir for calcium and hematopoiesis (marrow blood cell production).'
-  },
-  {
-    id: 'muscular',
-    name: 'Muscular System',
-    category: 'Structural',
-    color: '#b5534b',
-    pbr: { metalness: 0.04, roughness: 0.58 },
-    description: 'Composed of over 600 skeletal muscles that convert chemical energy into mechanical force, driving locomotion, postural stabilization, and thermal homeostasis via thermogenesis.'
-  },
-  {
-    id: 'cardiac',
-    name: 'Heart & Chambers',
-    category: 'Circulatory',
-    color: '#c93b3b',
-    pbr: { metalness: 0.1, roughness: 0.4 },
-    description: 'The four-chambered electromechanical pump driving continuous dual-circuit blood circulation (pulmonary and systemic), sustaining cellular oxygenation and systemic perfusion.'
-  },
-  {
-    id: 'arterial',
-    name: 'Arterial Vasculature',
-    category: 'Circulatory',
-    color: '#d62828',
-    pbr: { metalness: 0.15, roughness: 0.38 },
-    description: 'High-pressure muscular and elastic conduits originating at the aortic root, distributing oxygenated blood and metabolic nutrients downstream to microvascular capillary beds.'
-  },
-  {
-    id: 'venous',
-    name: 'Venous Vasculature',
-    category: 'Circulatory',
-    color: '#3a7ca5',
-    pbr: { metalness: 0.12, roughness: 0.42 },
-    description: 'Low-pressure capacitance vessels utilizing valves and muscular pumps to return deoxygenated blood and metabolic waste products back toward the right atrium.'
-  },
-  {
-    id: 'nervous',
-    name: 'Nervous System',
-    category: 'Neural',
-    color: '#e9c46a',
-    pbr: { metalness: 0.05, roughness: 0.48 },
-    description: 'The master electrochemical control and communication network comprising the encephalon (brain), medulla spinalis (spinal cord), and extensive peripheral and autonomic nerve plexuses.'
-  },
-  {
-    id: 'respiratory',
-    name: 'Respiratory System',
-    category: 'Visceral',
-    color: '#bc6c7e',
-    pbr: { metalness: 0.06, roughness: 0.55 },
-    description: 'Conducting zone (larynx, trachea, bronchial tree) and respiratory zone (alveoli) responsible for rapid alveolar gas exchange of oxygen and carbon dioxide, regulating systemic pH.'
-  },
-  {
-    id: 'digestive',
-    name: 'Digestive System',
-    category: 'Visceral',
-    color: '#c48b52',
-    pbr: { metalness: 0.08, roughness: 0.5 },
-    description: 'Gastrointestinal tract extending from the esophagus to rectum, supplemented by metabolic accessory organs (liver, gallbladder, pancreas) for enzymatic digestion and nutrient assimilation.'
-  },
-  {
-    id: 'urinary',
-    name: 'Urinary System',
-    category: 'Visceral',
-    color: '#bf6c54',
-    pbr: { metalness: 0.07, roughness: 0.46 },
-    description: 'The renal-urinary axis: kidneys filtering metabolic wastes, balancing electrolyte osmolality and blood volume, with ureters transporting urine to the bladder reservoir.'
-  },
-  {
-    id: 'lymphatic',
-    name: 'Lymphatic & Immune',
-    category: 'Circulatory',
-    color: '#6b9080',
-    pbr: { metalness: 0.05, roughness: 0.58 },
-    description: 'A complex drainage and immune surveillance network of lymph nodes, spleen, and lymphatic channels that recovers interstitial fluid and filters pathogens.'
-  },
-  {
-    id: 'endocrine',
-    name: 'Endocrine System',
-    category: 'Visceral',
-    color: '#c99da3',
-    pbr: { metalness: 0.05, roughness: 0.5 },
-    description: 'Ductless glandular organs (pituitary, thyroid, adrenals, islets) secreting molecular messenger hormones directly into the bloodstream to modulate physiological development and metabolism.'
-  },
-  {
-    id: 'reproductive',
-    name: 'Reproductive System',
-    category: 'Visceral',
-    color: '#b58b94',
-    pbr: { metalness: 0.05, roughness: 0.48 },
-    description: 'Specialized gonadal and secondary structures responsible for gametogenesis, production of steroid sex hormones, and biological procreation.'
-  },
-  {
-    id: 'integumentary',
-    name: 'Integumentary Surface',
-    category: 'Superficial',
-    color: '#d4ab8e',
-    pbr: { metalness: 0.02, roughness: 0.62, opacity: 0.22 },
-    description: 'The external cutaneous boundary layer comprising epidermis and dermis, functioning as an indispensable barrier against microbiological invasion, desiccation, and trauma.'
-  },
-  {
-    id: 'connective',
-    name: 'Connective & Cartilage',
-    category: 'Structural',
-    color: '#90a4ae',
-    pbr: { metalness: 0.08, roughness: 0.6 },
-    description: 'Specialized hyaline/fibrocartilage, articular capsules, and fibroelastic ligaments maintaining joint congruity and tensile mechanical integrity.'
-  },
-  {
-    id: 'sensory',
-    name: 'Sensory Organs',
-    category: 'Neural',
-    color: '#90caf9',
-    pbr: { metalness: 0.15, roughness: 0.35 },
-    description: 'Peripheral sensory apparatus including the eyes, optic pathways, auditory cochlea, and vestibular system transducing environmental physical stimuli into neural action potentials.'
-  }
+export interface SystemMeta {
+  id: SystemId;
+  label: string;
+  short: string;
+  /** UI swatch colour. */
+  swatch: string;
+  /** Default opacity at start (0 = hidden). */
+  defaultOpacity: number;
+  /** Rough depth order from superficial (0) to deep. Used by dissection presets. */
+  depth: number;
+  /** Whether the body-view mesh is fetched during the initial load. */
+  eager: boolean;
+}
+
+export const SYSTEMS: SystemMeta[] = [
+  { id: 'integumentary', label: 'Integumentary', short: 'Skin', swatch: '#d8b49c', defaultOpacity: 0.16, depth: 0, eager: true },
+  { id: 'muscular', label: 'Muscular', short: 'Muscles', swatch: '#b4473f', defaultOpacity: 0, depth: 1, eager: false },
+  { id: 'cardiovascular', label: 'Cardiovascular', short: 'Vessels', swatch: '#c23b32', defaultOpacity: 0, depth: 2, eager: false },
+  { id: 'nervous', label: 'Nervous', short: 'Nervous', swatch: '#e9cf7a', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'respiratory', label: 'Respiratory', short: 'Airways', swatch: '#d79a95', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'digestive', label: 'Digestive', short: 'Digestive', swatch: '#c88a63', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'urinary', label: 'Urinary', short: 'Urinary', swatch: '#d1a04a', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'reproductive', label: 'Reproductive', short: 'Reproductive', swatch: '#c98a9a', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'endocrine', label: 'Endocrine glands', short: 'Endocrine', swatch: '#b28bd0', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'lymphatic', label: 'Lymphoid organs', short: 'Lymphoid', swatch: '#8e6aa8', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'sensory', label: 'Sense organs', short: 'Senses', swatch: '#8fb3c9', defaultOpacity: 1, depth: 2, eager: true },
+  { id: 'skeletal', label: 'Skeletal', short: 'Skeleton', swatch: '#e6dcc6', defaultOpacity: 1, depth: 3, eager: true },
 ];
 
-export const ALL_SYSTEM_IDS: SystemId[] = [
-  'skeletal',
-  'muscular',
-  'cardiac',
-  'arterial',
-  'venous',
-  'nervous',
-  'respiratory',
-  'digestive',
-  'urinary',
-  'lymphatic',
-  'endocrine',
-  'reproductive',
-  'integumentary',
-  'connective',
-  'sensory',
-];
+export const SYSTEM_BY_ID: Record<SystemId, SystemMeta> = Object.fromEntries(SYSTEMS.map((s) => [s.id, s])) as Record<
+  SystemId,
+  SystemMeta
+>;
 
-export const DEFAULT_ACTIVE_SYSTEMS: SystemId[] = [
-  'skeletal',
-  'muscular',
-  'cardiac',
-  'arterial',
-  'venous',
-  'nervous',
-  'respiratory',
-  'digestive',
-  'urinary',
-  'connective'
-];
+export const ALL_SYSTEM_IDS: SystemId[] = SYSTEMS.map((s) => s.id);
 
+export type SystemOpacity = Record<SystemId, number>;
+
+export const defaultOpacities = (): SystemOpacity =>
+  Object.fromEntries(SYSTEMS.map((s) => [s.id, s.defaultOpacity])) as SystemOpacity;
+
+/** Dissection presets: progressively remove superficial layers. */
+export interface DissectionPreset {
+  id: string;
+  label: string;
+  opacity: Partial<SystemOpacity>;
+}
+
+const organs = (v: number): Partial<SystemOpacity> => ({
+  nervous: v,
+  respiratory: v,
+  digestive: v,
+  urinary: v,
+  reproductive: v,
+  endocrine: v,
+  lymphatic: v,
+  sensory: v,
+});
+
+export const DISSECTION_PRESETS: DissectionPreset[] = [
+  { id: 'surface', label: 'Surface', opacity: { integumentary: 1, muscular: 0, cardiovascular: 0, ...organs(0), skeletal: 0 } },
+  { id: 'muscles', label: 'Muscles', opacity: { integumentary: 0.08, muscular: 1, cardiovascular: 0, ...organs(0), skeletal: 1 } },
+  { id: 'deep', label: 'Deep muscles', opacity: { integumentary: 0, muscular: 0.35, cardiovascular: 1, ...organs(1), skeletal: 1 } },
+  { id: 'viscera', label: 'Organs', opacity: { integumentary: 0.12, muscular: 0, cardiovascular: 0.25, ...organs(1), skeletal: 1 } },
+  { id: 'vessels', label: 'Vessels & nerves', opacity: { integumentary: 0.08, muscular: 0, cardiovascular: 1, ...organs(0), nervous: 1, skeletal: 0.35 } },
+  { id: 'skeleton', label: 'Skeleton', opacity: { integumentary: 0, muscular: 0, cardiovascular: 0, ...organs(0), skeletal: 1 } },
+];

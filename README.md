@@ -1,127 +1,51 @@
-# IMMERSA — 3D Human Anatomy & Medical Knowledge Platform
+# Immersa — interactive 3D human anatomy explorer
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Three.js-0.160.0-black?style=for-the-badge&logo=three.js" alt="Three.js" />
-  <img src="https://img.shields.io/badge/React-18.3.1-blue?style=for-the-badge&logo=react" alt="React" />
-  <img src="https://img.shields.io/badge/TypeScript-5.6-blue?style=for-the-badge&logo=typescript" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC?style=for-the-badge&logo=tailwind-css" alt="Tailwind" />
-  <img src="https://img.shields.io/badge/Vite-5.4-646CFF?style=for-the-badge&logo=vite" alt="Vite" />
-  <img src="https://img.shields.io/badge/Anatomy_Standard-FMA_%26_TA2-teal?style=for-the-badge" alt="TA2 FMA" />
-</p>
+Browser-based anatomy explorer with two switchable bodies:
 
-> **IMMERSA** is an interactive, browser-based 3D anatomical atlas and medical knowledge platform designed for medical students, healthcare practitioners, and anatomical research. It features **2,260 segmented structures**, dual biological sex reference models, and comprehensive medical documentation with interactive visual tools.
+- **Male** — BodyParts3D (2,234 separately segmented meshes, FMA-identified)
+- **Female** — HuBMAP Human Reference Atlas 3D reference organs of the Visible Human Female (882 meshes, UBERON/FMA-identified)
+React 19 + TypeScript (strict) + Vite + Three.js via React Three Fiber.
 
----
-
-## Key Capabilities
-
-### 1. Dual Biological Sex Reference Models
-* **Adult Male & Female Reference Assemblies:** Anatomically accurate models with scientifically proportioned anthropometry (shoulder breadth, carrying angle, pelvic inlet width, waist-to-hip ratio, and soft tissue distributions).
-* **Curated Pelvic & Reproductive Viscera:** Procedurally modeled internal pelvic viscera and external genitalia tailored to each biological sex.
-* **Strict Anatomical Integrity:** Dynamic sex-filtering ensures structures from opposite reference models never overlap.
-
-### 2. Multi-Layer Presentation & Dissection
-* **Surface View:** Intact cutaneous boundary with natural surface contours.
-* **Musculoskeletal View:** Over 600 skeletal muscles articulated across the skeletal framework.
-* **Organ / Visceral View:** Deep thoracic, abdominal, and pelvic visceral organs with isolated neurovascular conduits.
-* **Layer Dissection Slider:** Interactive exploded view allowing continuous physical separation of anatomical layers along anatomical axes.
-
-### 3. Dedicated Medical Documentation Engine
-Every single anatomical part and system features a dedicated **"Know More"** medical dossier containing 15 standardized clinical sections:
-* **Overview & Significance:** Functional overview and physiological imperatives.
-* **Anatomy & Spatial Boundaries:** Exact coordinates, dimensions, landmarks, and spatial boundaries.
-* **Microstructure & Histology:** Tissue types, cell types, and extracellular matrix composition.
-* **Physiological Mechanisms:** Step-by-step cascades and feedback regulation.
-* **Neurovascular Pedicles:** Arterial supply, venous drainage, lymphatic flow, and detailed innervation.
-* **Clinical Pathologies:** Pathophysiology, prevalence, and severity ratings (Mild, Moderate, Critical).
-* **Signs & Symptoms:** Hallmark indicators, clinical manifestations, and emergency red-flag callouts.
-* **Diagnostic Workup:** Physical maneuvers, laboratory biomarkers, and imaging studies (X-ray, CT, MRI, Ultrasound).
-* **Evidence-Based Treatments:** First-line pharmacotherapy, surgical interventions, and rehabilitation.
-* **Authoritative Citations:** References to *Gray's Anatomy* (42nd ed.), *Terminologia Anatomica* (TA2), and peer-reviewed literature.
-
-### 4. Interactive Visual Learning Tools
-Embedded visual learning components within each documentation page:
-* **Interactive Physiological Schematics:** Dynamic SVG diagrams (cardiac conduction, nephron countercurrent multiplier, alveolar gas exchange, sarcomere sliding filament, neural synapses, and organ vascular relations) with clickable nodes and metrics.
-* **Embedded 3D Inspection Turntable:** Independent 360° WebGL turntable with auto-rotation, wireframe toggle, and bounding dimensions.
-* **Normal vs. Pathological State Comparison:** Interactive split-view comparing healthy histology with diseased hallmarks.
-* **Process Flow Pipelines:** Step-by-step interactive biochemical and physiological pathways.
-* **Clinical Evidence Matrices:** Tabular summaries of diagnostic sensitivities and therapeutic guidelines.
-
----
-
-## 15 Anatomical Systems
-
-| Category | Systems Covered |
-| :--- | :--- |
-| **Structural** | Skeletal System · Muscular System · Connective & Cartilage |
-| **Circulatory** | Cardiac & Chambers · Arterial Vasculature · Venous Vasculature · Lymphatic & Immune |
-| **Neural & Sensory** | Central & Peripheral Nervous System · Sensory Organs (Vision, Auditory, Vestibular) |
-| **Visceral** | Respiratory System · Digestive System · Urinary System · Endocrine System · Reproductive System |
-| **Superficial** | Integumentary Surface & Cutaneous Layer |
-
----
-
-## Quickstart
-
-### Prerequisites
-* **Node.js** >= 18.0.0
-* **npm** >= 9.0.0
-
-### Installation
+## Run
 
 ```bash
-# Clone the repository
-git clone https://github.com/Rajdeep582/IMMERSA.git
-cd IMMERSA
-
-# Install dependencies
-npm install
-
-# Start local development server
-npm run dev
+npm ci          # install exact locked dependencies
+npm run dev     # http://localhost:5173
 ```
 
-### Production Build & Validation
+Other scripts: `npm run build` (typecheck + production build), `npm run preview` (serve `dist/`), `npm test` (Vitest), `npm run typecheck`.
+
+## What is in the box
+
+| Area | Implementation |
+|---|---|
+| Male model | 2,234 BodyParts3D meshes → 1,659 FMA structures, 172 navigation groups, 12 systems (`public/data/male`) |
+| Female model | 882 HRA meshes → 972 nodes incl. reproductive organs, mammary glands, ~280 brain regions, 29 spinal-cord segments, landmark surfaces (`public/data/female`) |
+| Body toggle | Male/Female switch in the top bar (also `?body=female`); camera pose kept, selection mapped to the equivalent structure |
+| LOD | Male body view 1.62 M tris / 14.3 MB, full res 6.68 M / 37 MB. Female body view 0.50 M / 3.7 MB, full res 5.27 M / 23 MB. Full-res regional chunks load on demand |
+| Camera | Custom spherical rig (`src/engine/cameraRig.ts`): time-based damping, pointer-anchored dolly, inertia, interruptible/retargetable cinematic flights with zoom arc, adaptive near/far |
+| Input | Mouse, wheel, trackpad pinch (ctrl+wheel), touch orbit / pinch-at-midpoint / two-finger pan, keyboard (`src/engine/rigInput.ts`) |
+| Layers | Per-system opacity, dissection presets, per-structure hide/fade, isolate / ghost-others, exploded group view |
+| Picking | BVH-accelerated raycast with ring sampling for thin structures; click the same spot again to drill through overlapping structures; screen-space outline + floating label on the selection |
+| Inspector | Second independent WebGL viewport with own camera, full-resolution mesh, neighbour context, wireframe |
+| Guided | 4 scroll-scrubbed journeys (spine → L1, heart, brain, upper limb), reversible, interruptible |
+| Adaptive quality | Device tiering + runtime DPR controller, demand-driven rendering (no frames when idle) |
+
+## Data pipeline
+
+`scripts/` rebuilds `public/data` and `public/models` from the original BodyParts3D download:
 
 ```bash
-# Run strict anatomical invariant verification (2,260 parts)
-npm run validate:anatomy
-
-# Compile TypeScript and build production bundle
-npm run build
-
-# Preview production build locally
-npm run preview
+# 1. Download from https://dbarchive.biosciencedbc.jp/en/bodyparts3d/download.html into raw/bp3d/:
+#    isa_BP3D_4.0_obj_99.zip (unzipped), isa_/partof_ *_parts_list_e.txt, *_element_parts.txt, *_inclusion_relation_list.txt
+python3 scripts/scan_headers.py            # -> raw/bp3d/fj_meta.json
+python3 scripts/build_registry.py
+node scripts/build_meshes.mjs                 # writes public/models/male (move its manifest.json to public/data/male/)
+# Female: clone hubmapconsortium/ccf-3d-reference-object-library and the v2.0 crosswalk from ccf-releases into raw/hra/
+node scripts/build_female.mjs                 # writes public/data/female + public/models/female
+# pipeline deps: meshoptimizer @gltf-transform/core @gltf-transform/extensions @gltf-transform/functions
 ```
 
----
+See `ASSETS.md` for licences, attribution and known anatomical gaps.
 
-## Navigation & Hotkeys
-
-| Key / Gesture | Action |
-| :---: | :--- |
-| `Left Click + Drag` | 360° Orbit and camera rotation |
-| `Right Click + Drag` | Pan camera across plane |
-| `Scroll / Pinch` | Smooth zoom in / out |
-| `/` | Open global anatomical search modal |
-| `1` – `6` | Standard anatomical camera views (Anterior, Posterior, Left, Right, Superior, Isometric) |
-| `R` | Reset camera to default orientation |
-| `+` / `-` | Incremental zoom adjustments |
-| `Esc` | Close documentation or active modal and return to 3D simulation |
-
----
-
-## Scientific Attribution & Sources
-
-* **Male Atlas Geometry:** [BodyParts3D](https://lifesciencedb.jp/bp3d/) 4.0 by Database Center for Life Science (DBCLS), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-* **Anatomical Nomenclature:** *Terminologia Anatomica* (TA2) by FIPAT / IFAA.
-* **Anatomical Knowledge Base:** *Gray's Anatomy: The Anatomical Basis of Clinical Practice* (42nd ed., Elsevier, 2021).
-* **Female Geometry & Viscera:** Curated educational procedural models conforming to anthropometric datasets.
-
-> **Medical Disclaimer:** IMMERSA is engineered strictly for educational, instructional, and research purposes. It is not a clinical diagnostic medical device.
-
----
-
-<p align="center">
-  <b>IMMERSA</b> — Built for Next-Generation Medical Education
-</p>
+Educational visualization — not a diagnostic or clinical tool.

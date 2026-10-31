@@ -1,139 +1,292 @@
-import React, { useEffect } from 'react';
-import { useAnatomyStore } from './store/useAnatomyStore';
-import { fetchManifest } from './services/modelLoader';
-import { ADDITIONAL_PARTS } from './data/anatomyCatalog';
-import { Header } from './components/Header/Header';
-import { MainViewport } from './components/MainViewport/MainViewport';
-import { LayerPanel } from './components/LayerPanel/LayerPanel';
-import { InfoPanel } from './components/InfoPanel/InfoPanel';
-import { FloatingToolbar } from './components/Toolbar/FloatingToolbar';
-import { GuidedTourOverlay } from './components/GuidedTour/GuidedTourOverlay';
-import { SearchModal } from './components/SearchModal/SearchModal';
-import { InspectModal } from './components/InspectionViewport/InspectModal';
-import { MedicalDocumentationPage } from './components/MedicalDocumentation/MedicalDocumentationPage';
+import { BookOpen, Layers, ListTree, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { loadRegistry, mapSelection, type Registry } from './data/registry';
+import type { BodyModel } from './data/types';
+import { BodyToggle } from './ui/BodyToggle';
+import { detectQuality, webgl2Available } from './engine/quality';
+import { STANDARD_VIEWS } from './engine/cameraRig';
+import { viewer } from './engine/viewer';
+import { GuidedPanel, JourneyPicker } from './guided/GuidedPanel';
+import { MainViewport } from './scene/MainViewport';
+import { useApp } from './state/store';
+import { Breadcrumbs } from './ui/Breadcrumbs';
+import { ImmersiveBar } from './ui/ImmersiveBar';
+import { ExploreTree } from './ui/ExploreTree';
+import { InspectorPanel } from './ui/InspectorPanel';
+import { LayersPanel } from './ui/LayersPanel';
+import { HintToast, HoverLabel, LoadingVeil, SelectionPin, StatsOverlay } from './ui/Overlays';
+import { Search } from './ui/Search';
+import { SourcesPanel } from './ui/SourcesPanel';
+import { Toolbar } from './ui/Toolbar';
 
-export const App: React.FC = () => {
-  const setManifest = useAnatomyStore((s) => s.setManifest);
-  const setError = useAnatomyStore((s) => s.setError);
-  const setSearchOpen = useAnatomyStore((s) => s.setSearchOpen);
-  const setActiveView = useAnatomyStore((s) => s.setActiveView);
-  const triggerResetCamera = useAnatomyStore((s) => s.triggerResetCamera);
-  const triggerZoomIn = useAnatomyStore((s) => s.triggerZoomIn);
-  const triggerZoomOut = useAnatomyStore((s) => s.triggerZoomOut);
-  const error = useAnatomyStore((s) => s.error);
-  const activeDocumentation = useAnatomyStore((s) => s.activeDocumentation);
-
-  // Initialize anatomical atlas manifest on mount
+function useIsMobile() {
+  const q = '(max-width: 760px)';
+  const [m, setM] = useState(() => matchMedia(q).matches);
   useEffect(() => {
-    fetchManifest()
-      .then((data) => {
-        // The host atlas is male-only; append curated female pelvic/external
-        // anatomy and the missing male scrotum/meatus without duplicating IDs.
-        const existing = new Set(data.parts.map((part) => part.id));
-        const additions = ADDITIONAL_PARTS.filter((part) => !existing.has(part.id));
-        setManifest({ ...data, parts: [...data.parts, ...additions] });
-      })
-      .catch((err) => {
-        console.error('Failed to load anatomical atlas:', err);
-        setError('Failed to load anatomical atlas. Please check your network and refresh.');
-      });
-  }, [setManifest, setError]);
+    const mq = matchMedia(q);
+    const on = () => setM(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return m;
+}
 
-  // Global Keyboard Shortcuts
+function useKeyboard() {
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
-        return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const st = useApp.getState();
+      const rig = viewer.rig;
+      const v = STANDARD_VIEWS.find((x) => x.key === e.key);
+      if (v) return viewer.standardView(v.id);
+      switch (e.key) {
+        case 'h':
+        case 'H':
+          return viewer.home();
+        case 'f':
+        case 'F':
+          if (st.selectedId) viewer.focus(st.selectedId);
+          return;
+        case 'i':
+        case 'I':
+          if (st.selectedId) st.setInspectorOpen(!st.inspectorOpen);
+          return;
+        case 'g':
+        case 'G':
+          return window.dispatchEvent(new Event('immersa:guided'));
+        case 'p':
+        case 'P':
+          return st.toggleStats();
+        case '+':
+        case '=':
+          return viewer.zoom(0.75);
+        case '-':
+        case '_':
+          return viewer.zoom(1 / 0.75);
+        case 'Escape':
+          if (st.immersive) st.setImmersive(false);
+          else if (st.isolate) st.setIsolate(null);
+          else st.select(null);
+          return;
       }
-
-      if (e.key === '/') {
-        e.preventDefault();
-        setSearchOpen(true);
-      } else if (e.key === 'r' || e.key === 'R') {
-        triggerResetCamera();
-      } else if (e.key === 'h' || e.key === 'H') {
-        const currentMode = useAnatomyStore.getState().interactionMode;
-        useAnatomyStore.getState().setInteractionMode(currentMode === 'rotate' ? 'pan' : 'rotate');
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        useAnatomyStore.getState().triggerPan(0, -30);
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        useAnatomyStore.getState().triggerPan(0, 30);
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        useAnatomyStore.getState().triggerPan(-30, 0);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        useAnatomyStore.getState().triggerPan(30, 0);
-      } else if (e.key === '+' || e.key === '=') {
-        triggerZoomIn();
-      } else if (e.key === '-' || e.key === '_') {
-        triggerZoomOut();
-      } else if (e.key === '1') {
-        setActiveView('anterior');
-      } else if (e.key === '2') {
-        setActiveView('posterior');
-      } else if (e.key === '3') {
-        setActiveView('left');
-      } else if (e.key === '4') {
-        setActiveView('right');
-      } else if (e.key === '5') {
-        setActiveView('superior');
-      } else if (e.key === '6') {
-        setActiveView('isometric');
-      }
+      if (!rig || st.guided) return;
+      const step = e.shiftKey ? 40 : 0;
+      if (e.key === 'ArrowLeft') step ? rig.pan(-step, 0, 600) : rig.rotate(-28, 0, 600);
+      else if (e.key === 'ArrowRight') step ? rig.pan(step, 0, 600) : rig.rotate(28, 0, 600);
+      else if (e.key === 'ArrowUp') step ? rig.pan(0, -step, 600) : rig.rotate(0, -22, 600);
+      else if (e.key === 'ArrowDown') step ? rig.pan(0, step, 600) : rig.rotate(0, 22, 600);
+      else return;
+      e.preventDefault();
+      viewer.invalidate();
     };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+}
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setSearchOpen, triggerResetCamera, setActiveView]);
+function LeftPanel({ registry, onPicked }: { registry: Registry; onPicked?: () => void }) {
+  const tab = useApp((s) => s.leftTab);
+  const setTab = useApp((s) => s.setLeftTab);
+  return (
+    <>
+      <div className="tabs" role="tablist">
+        {(
+          [
+            ['layers', 'Layers', Layers],
+            ['explore', 'Explore', ListTree],
+            ['sources', 'Sources', BookOpen],
+          ] as const
+        ).map(([id, label, Icon]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+      <div className="panel-scroll" role="tabpanel" onClick={(e) => onPicked && (e.target as HTMLElement).closest('.tree-label') && onPicked()}>
+        {tab === 'layers' && <LayersPanel registry={registry} />}
+        {tab === 'explore' && <ExploreTree registry={registry} />}
+        {tab === 'sources' && <SourcesPanel registry={registry} />}
+      </div>
+    </>
+  );
+}
+
+export function App() {
+  const [registry, setRegistry] = useState<Registry | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [picker, setPicker] = useState(false);
+  const [sheet, setSheet] = useState<'none' | 'left' | 'info'>('none');
+  const quality = useMemo(() => detectQuality(), []);
+  const hasGL = useMemo(() => webgl2Available(), []);
+  const mobile = useIsMobile();
+  const leftOpen = useApp((s) => s.leftOpen);
+  const rightOpen = useApp((s) => s.rightOpen);
+  const setLeftOpen = useApp((s) => s.setLeftOpen);
+  const setRightOpen = useApp((s) => s.setRightOpen);
+  const guided = useApp((s) => s.guided);
+  const selectedId = useApp((s) => s.selectedId);
+  const immersive = useApp((s) => s.immersive);
+  useKeyboard();
+
+  useEffect(() => {
+    useApp.getState().setTier(quality.tier);
+    if (mobile) {
+      setLeftOpen(false);
+      setRightOpen(false);
+    }
+    loadRegistry(useApp.getState().bodyModel)
+      .then(setRegistry)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [switching, setSwitching] = useState<BodyModel | null>(null);
+  const switchModel = (m: BodyModel) => {
+    if (m === useApp.getState().bodyModel || switching) return;
+    setSwitching(m);
+    loadRegistry(m)
+      .then((next) => {
+        const st = useApp.getState();
+        const mapped = registry ? mapSelection(registry, next, st.selectedId) : null;
+        setPicker(false);
+        setRegistry(next);
+        st.setBodyModel(m, mapped);
+      })
+      .catch((e: unknown) => useApp.getState().showHint(`Could not load the ${m} model: ${e instanceof Error ? e.message : String(e)}`))
+      .finally(() => setSwitching(null));
+  };
+
+  const toggleGuided = () => {
+    if (useApp.getState().guided) useApp.getState().setGuided(null);
+    else setPicker((p) => !p);
+  };
+  useEffect(() => {
+    const on = () => toggleGuided();
+    window.addEventListener('immersa:guided', on);
+    return () => window.removeEventListener('immersa:guided', on);
+  });
+
+  useEffect(() => {
+    if (immersive) {
+      setSheet('none');
+      setPicker(false);
+    }
+  }, [immersive]);
+
+  // Sheets change the visible area; nudge the 3D view to re-centre.
+  useEffect(() => {
+    for (const t of [40, 360]) window.setTimeout(() => viewer.invalidate(), t);
+  }, [sheet]);
+
+  // On phones, a fresh selection peeks the info sheet.
+  useEffect(() => {
+    if (mobile && selectedId && !guided && !useApp.getState().immersive) setSheet('info');
+  }, [mobile, selectedId, guided]);
+
+  if (!hasGL)
+    return (
+      <div className="fatal">
+        <h1>Immersa needs WebGL 2</h1>
+        <p>This browser or device did not provide a WebGL 2 context. Try a current version of Chrome, Edge, Firefox or Safari, and make sure hardware acceleration is enabled.</p>
+      </div>
+    );
+  if (error)
+    return (
+      <div className="fatal">
+        <h1>Anatomy data could not be loaded</h1>
+        <p className="mono">{error}</p>
+        <button className="chip gold" onClick={() => location.reload()}>
+          Retry
+        </button>
+      </div>
+    );
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#080d19] text-slate-100 font-sans select-none">
-      {/* Top Header */}
-      <Header />
+    <div className={`app ${mobile ? 'mobile' : ''} ${leftOpen && !mobile ? 'l-open' : ''} ${rightOpen && !mobile ? 'r-open' : ''} ${immersive ? 'immersive' : ''}`}>
+      {registry && <MainViewport registry={registry} quality={quality} />}
+      {registry && <HoverLabel registry={registry} />}
+      {registry && <SelectionPin key={registry.model} registry={registry} />}
+      <LoadingVeil />
 
-      {/* Main 3D Viewport Canvas */}
-      <main className="absolute top-16 left-0 right-0 bottom-0 z-0 overflow-hidden">
-        <MainViewport />
-      </main>
-
-      {/* Left Layer Control Panel */}
-      <div className="fixed top-20 left-4 z-20">
-        <LayerPanel />
-      </div>
-
-      {/* Right Contextual Anatomical Inspector / Mobile Bottom Sheet */}
-      <div className="fixed bottom-0 md:bottom-auto md:top-20 right-0 z-20 max-md:left-0 pointer-events-none [&>*]:pointer-events-auto">
-        <InfoPanel />
-      </div>
-
-      {/* Bottom Floating Perspectives Toolbar */}
-      <FloatingToolbar />
-
-      {/* Guided Scrollytelling Overlay */}
-      <GuidedTourOverlay />
-
-      {/* Global Search Dialog */}
-      <SearchModal />
-
-      {/* Fullscreen 3D Structure Inspection Modal */}
-      <InspectModal />
-
-      {/* Dedicated Comprehensive Medical Documentation Page */}
-      {activeDocumentation && <MedicalDocumentationPage />}
-
-      {/* Global Error Banner */}
-      {error && (
-        <div className="fixed bottom-4 right-4 z-50 p-4 rounded-xl bg-rose-950/90 border border-rose-500/50 text-rose-200 text-xs shadow-2xl flex items-center gap-3">
-          <span>{error}</span>
+      <header className="topbar">
+        <div className="brand" aria-label="Immersa">
+          <span className="brand-mark" aria-hidden />
+          <span className="brand-name">Immersa</span>
+          <span className="brand-sub">3D Anatomy</span>
         </div>
+        {registry && <BodyToggle value={registry.model} pending={switching} onChange={switchModel} />}
+        {registry && !mobile && <Search registry={registry} />}
+      </header>
+
+      {registry && !mobile && (
+        <>
+          <aside className={`panel left ${leftOpen ? 'open' : ''}`} aria-label="Anatomy controls" aria-hidden={!leftOpen}>
+            <LeftPanel registry={registry} />
+          </aside>
+          <button className="panel-toggle left" onClick={() => setLeftOpen(!leftOpen)} aria-label={leftOpen ? 'Collapse controls' : 'Expand controls'}>
+            {leftOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+          </button>
+          {!guided && (
+            <aside className={`panel right ${rightOpen ? 'open' : ''}`} aria-label="Structure inspector" aria-hidden={!rightOpen}>
+              <InspectorPanel registry={registry} quality={quality} />
+            </aside>
+          )}
+          {!guided && (
+            <button className="panel-toggle right" onClick={() => setRightOpen(!rightOpen)} aria-label={rightOpen ? 'Collapse inspector' : 'Expand inspector'}>
+              {rightOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+            </button>
+          )}
+        </>
       )}
+
+      {registry && (mobile || !rightOpen || guided) && !immersive && <Breadcrumbs registry={registry} variant="float" />}
+      {registry && <ImmersiveBar registry={registry} />}
+      {registry && <Toolbar onGuided={toggleGuided} />}
+      {picker && !guided && (
+        <JourneyPicker
+          model={registry?.model ?? 'male'}
+          onClose={() => setPicker(false)}
+          onPick={(id) => {
+            setPicker(false);
+            setSheet('none');
+            useApp.getState().setGuided({ journeyId: id, progress: 0, following: true });
+          }}
+        />
+      )}
+      {registry && guided && <GuidedPanel key={`${registry.model}-${guided.journeyId}`} registry={registry} onExit={() => useApp.getState().setGuided(null)} />}
+
+      {registry && mobile && !guided && (
+        <>
+          <nav className="mobile-bar" aria-label="Panels">
+            <button className={sheet === 'left' ? 'on' : ''} onClick={() => setSheet(sheet === 'left' ? 'none' : 'left')}>
+              <Layers size={16} /> Layers
+            </button>
+            <button className={sheet === 'info' ? 'on' : ''} onClick={() => setSheet(sheet === 'info' ? 'none' : 'info')} disabled={!selectedId}>
+              <BookOpen size={16} /> Details
+            </button>
+          </nav>
+          {sheet !== 'none' && (
+            <div className="sheet" role="dialog" aria-label={sheet === 'left' ? 'Layers and search' : 'Structure details'}>
+              <div className="sheet-grip" onClick={() => setSheet('none')} aria-hidden />
+              {sheet === 'left' ? (
+                <>
+                  <Search registry={registry} onPicked={() => setSheet('info')} />
+                  <LeftPanel registry={registry} onPicked={() => setSheet('info')} />
+                </>
+              ) : (
+                <div className="panel-scroll">
+                  <InspectorPanel registry={registry} quality={quality} onClose={() => setSheet('none')} />
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      <HintToast />
+      <StatsOverlay />
     </div>
   );
-};
-
-export default App;
-
+}
