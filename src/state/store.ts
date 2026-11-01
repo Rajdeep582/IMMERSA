@@ -29,6 +29,9 @@ export interface AppState {
   setLayout: (l: 'phone' | 'tablet' | 'desktop') => void;
   /** One-finger / left-button drag pans instead of rotating. */
   panMode: boolean;
+  /** Atlas labels with leader lines in the 3D view. */
+  labels: boolean;
+  setLabels: (v: boolean) => void;
   setImmersive: (v: boolean) => void;
   setPanMode: (v: boolean) => void;
   ready: boolean;
@@ -104,6 +107,21 @@ export const useApp = create<AppState>((set, get) => ({
   layout: 'desktop',
   setLayout: (layout) => set({ layout }),
   panMode: false,
+  labels: (() => {
+    try {
+      return localStorage.getItem('immersa.labels') !== '0';
+    } catch {
+      return true;
+    }
+  })(),
+  setLabels: (labels) => {
+    try {
+      localStorage.setItem('immersa.labels', labels ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    set({ labels });
+  },
   setImmersive: (immersive) => set({ immersive }),
   setPanMode: (panMode) => set({ panMode }),
   setBodyModel: (bodyModel, mappedSelection = null) => {

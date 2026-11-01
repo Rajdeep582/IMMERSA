@@ -42,7 +42,12 @@ const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n).replace(/\s
 async function pubmedIds(term: string, env: Env, signal?: AbortSignal): Promise<string[]> {
   const p = new URLSearchParams({ db: 'pubmed', term, retmode: 'json', retmax: '4', sort: 'relevance', tool: 'immersa', email: env.NCBI_EMAIL || '' });
   if (env.NCBI_API_KEY) p.set('api_key', env.NCBI_API_KEY);
-  const res = await get(`${EUTILS}/esearch.fcgi?${p}`, signal);
+  let res = await get(`${EUTILS}/esearch.fcgi?${p}`, signal);
+  if (!res) {
+    // Usually a momentary 429 from NCBI's rate limiter: one quick retry.
+    await new Promise((r) => setTimeout(r, 450));
+    res = await get(`${EUTILS}/esearch.fcgi?${p}`, signal);
+  }
   if (!res) return [];
   try {
     const j = (await res.json()) as { esearchresult?: { idlist?: string[] } };
@@ -114,23 +119,29 @@ function relevance(query: string, title: string, text: string): number {
   return s / (2 * q.length);
 }
 
-export async function retrieve(plan: Plan, env: Env, signal?: AbortSignal): Promise<Omit<Source, 'n'>[]> {
+export async function retrieve(plan: Plan, env: Env, signal?: AbortSignal, subject?: string): Promise<Omit<Source, 'n'>[]> {
   const queries = plan.search.slice(0, 2).filter(Boolean);
   if (!queries.length) queries.push(plan.resolved);
   // PubMed is rate limited to ~3 requests/s without a key: run the searches in two waves.
-  const anatomy = /anatomy|terminology|app/.test(plan.intent);
+  // The structure selected in 3D (e.g. "Left femur" → "femur") when the question is about it.
+  const subj = subject?.replace(/^(left|right)\s+/i, '').toLowerCase();
+  const aboutSubject = !!subj && plan.resolved.toLowerCase().includes(subj);
+  const anatomy = /anatomy|terminology|app/.test(plan.intent) || aboutSubject;
+  // NCBI allows ~3 requests/s without a key: combine the queries so a question costs at most 3 searches.
+  const any = queries.map((q) => `(${q})`).join(' OR ');
+  const core = aboutSubject ? subj! : queries[0]!.replace(/\b(anatomy|anatomical|functions?|structure|roles?|overview|parts?)\b/gi, ' ').trim() || queries[0]!;
   const wave1 = [
     // StatPearls "Anatomy, …" chapters are the best free regional-anatomy reference.
-    ...(anatomy ? [`(${queries[0]!.replace(/\b(anatomy|anatomical|functions?|structure|roles?|overview|parts?)\b/gi, ' ').trim() || queries[0]}) AND anatomy[ti] AND statpearls[book]`] : []),
-    ...queries.map((q) => `(${q}) AND statpearls[book]`),
-  ].slice(0, 3);
+    ...(anatomy ? [`(${core}) AND anatomy[ti] AND statpearls[book]`] : []),
+    `(${any}) AND statpearls[book]`,
+  ];
   const sp = await Promise.all(wave1.map((t) => pubmedIds(t, env, signal)));
-  if (!env.NCBI_API_KEY) await new Promise((r) => setTimeout(r, 350));
-  const rv = await Promise.all(queries.map((q) => pubmedIds(`(${q}) AND (review[pt] OR systematic[sb]) AND 2014:3000[dp] AND hasabstract`, env, signal)));
+  if (!env.NCBI_API_KEY) await new Promise((r) => setTimeout(r, 340));
+  const rv = [await pubmedIds(`(${any}) AND (review[pt] OR systematic[sb]) AND 2014:3000[dp] AND hasabstract`, env, signal)];
   const [abs, mp] = await Promise.all([abstracts([...new Set([...sp.flat().slice(0, 4), ...rv.flat().slice(0, 5)])], signal), medlinePlus(plan.consumer, signal)]);
 
   const docs: (Omit<Source, 'n'> & { score: number })[] = [];
-  const query = [plan.resolved, ...queries].join(' ');
+  const query = [plan.resolved, plan.focus, ...queries].join(' ');
   for (const id of [...new Set([...sp.flat(), ...rv.flat()])]) {
     const r = abs.get(id);
     if (!r?.title || !r.abstractText) continue;

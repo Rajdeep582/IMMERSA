@@ -235,6 +235,7 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
           {rec.kind !== 'structure' && <span className="tag">{rec.kind === 'system' ? 'System' : 'Group'} · {rec.unitCount} meshes</span>}
           {rec.side && <span className="tag">{rec.side === 'L' ? 'Left' : 'Right'}</span>}
           {rec.landmark && <span className="tag gold">Landmark surface</span>}
+          {rec.adapted && <span className="tag" title="Not present in the female source data: mesh from the male model (BodyParts3D), fitted to this body">Adapted from male model</span>}
           {onClose && (
             <button className="icon-btn xs ghost push" onClick={onClose} aria-label="Close details">
               <X size={14} />

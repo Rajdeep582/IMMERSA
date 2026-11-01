@@ -43,6 +43,10 @@ export interface StructureRecord {
   landmark?: boolean;
   /** Source mesh node name (HRA). */
   hraNode?: string;
+  /** Geometry taken from the other body model and fitted to this one (female: skull, thorax, arms…). */
+  adapted?: 'male';
+  /** Z-Anatomy node the mesh came from. */
+  zaNode?: string;
 }
 
 export interface UnitRecord {

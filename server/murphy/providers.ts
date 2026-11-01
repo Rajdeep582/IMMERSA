@@ -119,9 +119,30 @@ class GeminiProvider implements LlmProvider {
     private key: string,
     private models: string[],
     private fastModels: string[],
+    private thinking: Record<string, string> = {},
   ) {}
+  /** Models that rejected our thinking setting (retried without it). */
+  private noThinking = new Set<string>();
+  /** Models that recently returned 429 (quota) are skipped for a minute instead of wasting a call. */
+  private cooldown = new Map<string, number>();
+  private available(models: string[]): string[] {
+    const now = Date.now();
+    const ok = models.filter((m) => (this.cooldown.get(m) ?? 0) < now);
+    return ok.length ? ok : models;
+  }
 
-  private body(c: LlmCall) {
+  /**
+   * Reasoning effort per model: answers think a little ("low"), the quick understand step not at all
+   * ("minimal") — this alone cuts answer latency several-fold on Gemini 3.x Flash.
+   */
+  private thinkingFor(model: string, fast: boolean): Record<string, string> | undefined {
+    if (this.noThinking.has(model)) return undefined;
+    const level = this.thinking[model] ?? (fast || /lite/.test(model) ? (/3\.8/.test(model) ? 'low' : 'minimal') : 'low');
+    return /gemini-(3|4)/.test(model) ? { thinkingLevel: level } : undefined;
+  }
+
+  private body(c: LlmCall, model: string) {
+    const thinkingConfig = this.thinkingFor(model, !!c.fast);
     return JSON.stringify({
       systemInstruction: { parts: [{ text: c.system }] },
       contents: c.messages.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
@@ -131,6 +152,7 @@ class GeminiProvider implements LlmProvider {
         // Budget includes the model's internal reasoning tokens on Gemini 2.5+/3.x, so keep it generous.
         maxOutputTokens: c.maxTokens ?? 4096,
         ...(c.json ? { responseMimeType: 'application/json' } : {}),
+        ...(thinkingConfig ? { thinkingConfig } : {}),
       },
     });
   }
@@ -149,8 +171,16 @@ class GeminiProvider implements LlmProvider {
       let ok = false;
       try {
         const url = `${GEMINI}/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
-        const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.key }, body: this.body(c), signal: ac.signal });
+        let res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.key }, body: this.body(c, model), signal: ac.signal });
+        if (res.status === 400 && !this.noThinking.has(model)) {
+          const txt = await res.clone().text();
+          if (/thinking/i.test(txt)) {
+            this.noThinking.add(model);
+            res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.key }, body: this.body(c, model), signal: ac.signal });
+          }
+        }
         if (!res.ok) {
+          if (res.status === 429) this.cooldown.set(model, Date.now() + 60_000);
           last = await failure(res, `gemini:${model}`);
           if (!(last as LlmError).retryable) throw last;
           continue;
@@ -174,53 +204,124 @@ class GeminiProvider implements LlmProvider {
   async complete(c: LlmCall) {
     const run = async (res: Response, model: string) => ({ model, text: geminiText((await res.json()) as GeminiChunk) });
     if (c.fast && this.fastModels.length > 1) {
-      // Quick step: race the first two fast models (separate quotas) — free-tier latency varies a lot with demand.
+      // Quick step: race the first two fast models (separate quotas); the slower one is cancelled.
       const [a, b, ...rest] = this.fastModels;
+      const ctls = [new AbortController(), new AbortController()];
+      const link = () => ctls.forEach((x) => x.abort());
+      c.signal?.addEventListener('abort', link);
       try {
-        return await Promise.any([a!, b!].map((m) => this.attempt({ ...c, fast: false }, false, 8000, run, [m])));
+        return await Promise.any(
+          [a!, b!].map((m, i) =>
+            this.attempt({ ...c, signal: ctls[i]!.signal }, false, 8000, run, [m]).then((r) => {
+              ctls[1 - i]!.abort();
+              return r;
+            }),
+          ),
+        );
       } catch {
-        if (rest.length) return this.attempt({ ...c, fast: false }, false, 12000, run, rest);
+        if (c.signal?.aborted) throw new LlmError('cancelled', 499, false);
+        if (rest.length) return this.attempt(c, false, 12000, run, rest);
         throw new LlmError('fast models unavailable', 503, true);
+      } finally {
+        c.signal?.removeEventListener('abort', link);
       }
     }
     return this.attempt(c, false, c.fast ? 9000 : 30000, run);
   }
 
-  async stream(c: LlmCall): Promise<LlmStream> {
-    // Wait for the first visible text (after the model's thinking) before committing to a model.
-    return this.attempt(c, true, 16000, async (res, model) => {
-      const it = sseJson(res.body!);
-      const pre: string[] = [];
-      let blocked = '';
+  /** Commit to a streaming response once its first visible text arrives (after the model's thinking). */
+  private readStream = async (res: Response, model: string): Promise<LlmStream> => {
+    const it = sseJson(res.body!);
+    const pre: string[] = [];
+    let blocked = '';
+    for (;;) {
+      const { value, done } = await it.next();
+      if (done) break;
+      const ch = value as GeminiChunk;
+      const t = geminiText(ch);
+      const reason = ch.candidates?.[0]?.finishReason ?? ch.promptFeedback?.blockReason;
+      if (t) {
+        pre.push(t);
+        break;
+      }
+      if (reason && reason !== 'STOP' && reason !== 'MAX_TOKENS') {
+        blocked = reason;
+        break;
+      }
+    }
+    async function* chunks() {
+      if (blocked) {
+        yield `_The model declined to answer this request (${blocked}). Try rephrasing it as an educational question._`;
+        return;
+      }
+      yield* pre;
       for (;;) {
         const { value, done } = await it.next();
         if (done) break;
-        const ch = value as GeminiChunk;
-        const t = geminiText(ch);
-        const reason = ch.candidates?.[0]?.finishReason ?? ch.promptFeedback?.blockReason;
-        if (t) {
-          pre.push(t);
-          break;
-        }
-        if (reason && reason !== 'STOP' && reason !== 'MAX_TOKENS') {
-          blocked = reason;
-          break;
-        }
+        const t = geminiText(value as GeminiChunk);
+        if (t) yield t;
       }
-      async function* chunks() {
-        if (blocked) {
-          yield `_The model declined to answer this request (${blocked}). Try rephrasing it as an educational question._`;
-          return;
+    }
+    return { model, chunks: chunks() };
+  };
+
+  /**
+   * Staggered hedged streaming: start the best model, and every HEDGE_MS (or immediately when the
+   * running ones have failed) start the next one; keep whichever begins answering first and cancel
+   * the rest. Free-tier flagships are often overloaded or out of quota, so this keeps answers fast.
+   */
+  async stream(c: LlmCall): Promise<LlmStream> {
+    const HEDGE_MS = 2500;
+    const models = this.available(this.models);
+    if (!models.length) throw new LlmError('no gemini model configured', 500, false);
+    return new Promise<LlmStream>((resolve, reject) => {
+      const ctls: AbortController[] = [];
+      const errors: unknown[] = [];
+      let launched = 0;
+      let failed = 0;
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = () => {
+        done = true;
+        clearTimeout(timer);
+        c.signal?.removeEventListener('abort', cancelAll);
+      };
+      const cancelAll = () => {
+        ctls.forEach((x) => x.abort());
+        if (!done) {
+          finish();
+          reject(new LlmError('cancelled', 499, false));
         }
-        yield* pre;
-        for (;;) {
-          const { value, done } = await it.next();
-          if (done) break;
-          const t = geminiText(value as GeminiChunk);
-          if (t) yield t;
-        }
-      }
-      return { model, chunks: chunks() };
+      };
+      c.signal?.addEventListener('abort', cancelAll);
+      const launch = () => {
+        if (done || launched >= models.length) return;
+        const i = launched++;
+        const ctl = new AbortController();
+        ctls[i] = ctl;
+        this.attempt({ ...c, signal: ctl.signal }, true, 12000, this.readStream, [models[i]!]).then(
+          (r) => {
+            if (done) return ctl.abort();
+            finish();
+            ctls.forEach((x, j) => j !== i && x.abort());
+            // Keep cancellation working for the winning stream.
+            c.signal?.addEventListener('abort', () => ctl.abort());
+            resolve(r);
+          },
+          (e) => {
+            if (done) return;
+            errors.push(e);
+            failed++;
+            if (failed >= models.length) {
+              finish();
+              reject(errors.find((x) => x instanceof LlmError && x.status === 429) ?? errors[0]);
+            } else if (failed >= launched) launch(); // everyone running has failed → next one now
+          },
+        );
+        clearTimeout(timer);
+        timer = setTimeout(launch, HEDGE_MS);
+      };
+      launch();
     });
   }
 }
@@ -321,8 +422,8 @@ class ChainProvider implements LlmProvider {
   }
 }
 
-export const DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite';
-export const DEFAULT_FAST_MODELS = 'gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.6-flash';
+export const DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite';
+export const DEFAULT_FAST_MODELS = 'gemini-3.1-flash-lite,gemini-3.5-flash-lite';
 
 /** Build the configured provider chain, or null when no credentials are set. */
 export function providerFromEnv(env: Env): LlmProvider | null {
@@ -336,7 +437,9 @@ export function providerFromEnv(env: Env): LlmProvider | null {
   if (kind === 'openai') {
     if (compat) chain.push(compat);
   } else {
-    if (env.GEMINI_API_KEY) chain.push(new GeminiProvider(env.GEMINI_API_KEY, list(env.MURPHY_MODELS, DEFAULT_MODELS), list(env.MURPHY_FAST_MODELS, DEFAULT_FAST_MODELS)));
+    // MURPHY_THINKING=gemini-3.8-flash=low,gemini-3.6-flash=minimal  (optional per-model override)
+    const thinking = Object.fromEntries(list(env.MURPHY_THINKING, '').map((kv) => kv.split('=').map((x) => x.trim()) as [string, string]));
+    if (env.GEMINI_API_KEY) chain.push(new GeminiProvider(env.GEMINI_API_KEY, list(env.MURPHY_MODELS, DEFAULT_MODELS), list(env.MURPHY_FAST_MODELS, DEFAULT_FAST_MODELS), thinking));
     if (compat) chain.push(compat);
   }
   if (!chain.length) return null;

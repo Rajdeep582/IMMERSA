@@ -1,6 +1,8 @@
 import { ArrowLeft, BookOpen, GraduationCap, Layers, ListTree, X, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { loadRegistry, mapSelection, type Registry } from './data/registry';
+import { preloadModel } from './engine/preload';
+import { SYSTEMS } from './data/systems';
 import type { BodyModel } from './data/types';
 import { BodyToggle } from './ui/BodyToggle';
 import { detectQuality, webgl2Available } from './engine/quality';
@@ -15,6 +17,7 @@ import { ExploreTree } from './ui/ExploreTree';
 import { InspectorPanel } from './ui/InspectorPanel';
 import { LayersPanel } from './ui/LayersPanel';
 import { HintToast, HoverLabel, LoadingVeil, SelectionPin, StatsOverlay } from './ui/Overlays';
+import { Labels3D } from './ui/Labels3D';
 import { Search } from './ui/Search';
 import { SourcesPanel } from './ui/SourcesPanel';
 import { Toolbar } from './ui/Toolbar';
@@ -67,6 +70,10 @@ function useKeyboard() {
         case 'p':
         case 'P':
           return st.toggleStats();
+        case 'l':
+        case 'L':
+          st.setLabels(!st.labels);
+          return viewer.invalidate();
         case '+':
         case '=':
           return viewer.zoom(0.75);
@@ -191,6 +198,17 @@ export function App() {
     [],
   );
 
+  // Once the current body is fully loaded, quietly load the other one so switching needs no wait.
+  useEffect(
+    () =>
+      useApp.subscribe((s) => {
+        const eager = SYSTEMS.filter((m) => m.eager);
+        if (!eager.every((m) => s.systemStatus[m.id] === 'ready' || s.systemStatus[m.id] === 'error')) return;
+        window.setTimeout(() => preloadModel(s.bodyModel === 'male' ? 'female' : 'male', s.tier), 1200);
+      }),
+    [],
+  );
+
   const [switching, setSwitching] = useState<BodyModel | null>(null);
   const switchModel = (m: BodyModel) => {
     if (m === useApp.getState().bodyModel || switching) return;
@@ -276,6 +294,7 @@ export function App() {
     >
       {registry && <MainViewport registry={registry} quality={quality} paused={learning} />}
       {registry && <HoverLabel registry={registry} />}
+      {registry && !learning && <Labels3D key={`l-${registry.model}`} registry={registry} />}
       {registry && <SelectionPin key={registry.model} registry={registry} />}
       <LoadingVeil />
 

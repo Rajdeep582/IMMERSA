@@ -15,9 +15,9 @@ export interface SystemMeta {
 }
 
 export const SYSTEMS: SystemMeta[] = [
-  { id: 'integumentary', label: 'Integumentary', short: 'Skin', swatch: '#d8b49c', defaultOpacity: 0.16, depth: 0, eager: true },
-  { id: 'muscular', label: 'Muscular', short: 'Muscles', swatch: '#b4473f', defaultOpacity: 0, depth: 1, eager: false },
-  { id: 'cardiovascular', label: 'Cardiovascular', short: 'Vessels', swatch: '#c23b32', defaultOpacity: 0, depth: 2, eager: false },
+  { id: 'integumentary', label: 'Integumentary', short: 'Skin', swatch: '#d8b49c', defaultOpacity: 0.12, depth: 0, eager: true },
+  { id: 'muscular', label: 'Muscular', short: 'Muscles', swatch: '#b4473f', defaultOpacity: 0.3, depth: 1, eager: true },
+  { id: 'cardiovascular', label: 'Cardiovascular', short: 'Vessels', swatch: '#c23b32', defaultOpacity: 1, depth: 2, eager: true },
   { id: 'nervous', label: 'Nervous', short: 'Nervous', swatch: '#e9cf7a', defaultOpacity: 1, depth: 2, eager: true },
   { id: 'respiratory', label: 'Respiratory', short: 'Airways', swatch: '#d79a95', defaultOpacity: 1, depth: 2, eager: true },
   { id: 'digestive', label: 'Digestive', short: 'Digestive', swatch: '#c88a63', defaultOpacity: 1, depth: 2, eager: true },

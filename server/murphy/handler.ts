@@ -115,17 +115,20 @@ export async function handleMurphy(req: Request, env: Env = (globalThis as { pro
         let sources: Source[] = [];
         if (plan.retrieve) {
           send({ type: 'status', stage: 'searching' });
-          const found = await retrieve(plan, env, ac.signal).catch(() => []);
-          sources = found.map((s, i) => ({ ...s, n: i + 1 }));
+          const found = await retrieve(plan, env, ac.signal, context?.selected?.name).catch(() => []);
+          // Fewer, shorter sources for short answers → smaller prompt → faster first token.
+          const keep = plan.depth === 'detailed' ? 6 : plan.depth === 'standard' ? 5 : 4;
+          const clipTo = plan.depth === 'detailed' ? 1300 : plan.depth === 'standard' ? 900 : 650;
+          sources = found.slice(0, keep).map((s, i) => ({ ...s, n: i + 1, snippet: s.snippet.length > clipTo ? s.snippet.slice(0, clipTo).replace(/\s+\S*$/, '') + '…' : s.snippet }));
         }
         send({ type: 'meta', plan: { corrected: plan.corrected, resolved: plan.resolved, urgent: plan.urgent, personal: plan.personal }, sources });
 
         // 3. Answer, streamed.
         send({ type: 'status', stage: 'writing' });
-        const messages: LlmMessage[] = [...history.map((t) => ({ role: t.role === 'user' ? ('user' as const) : ('model' as const), text: t.content })), { role: 'user', text: answerPrompt(message, plan, context, sources) }];
+        const messages: LlmMessage[] = [...history.slice(-8).map((t) => ({ role: t.role === 'user' ? ('user' as const) : ('model' as const), text: t.content.slice(0, 1500) })), { role: 'user', text: answerPrompt(message, plan, context, sources) }];
         // Gemini requires the conversation to start with a user turn.
         while (messages.length && messages[0]!.role !== 'user') messages.shift();
-        const s = await provider.stream({ system: ANSWER_SYSTEM, messages, maxTokens: 8192, temperature: 0.35, signal: ac.signal });
+        const s = await provider.stream({ system: ANSWER_SYSTEM, messages, maxTokens: plan.depth === 'detailed' ? 6000 : plan.depth === 'standard' ? 3000 : 2000, temperature: 0.3, signal: ac.signal });
         for await (const t of s.chunks) send({ type: 'delta', text: t });
         send({ type: 'done', model: s.model });
       } catch (e) {

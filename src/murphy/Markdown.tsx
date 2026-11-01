@@ -11,7 +11,7 @@ export function Markdown({ text, onCite }: { text: string; onCite?: (n: number) 
 
 function inline(s: string, onCite?: (n: number) => void, key = 'i'): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*|_[^_\s][^_]*_|`[^`]+`|\[(?:\d+)(?:\]\[\d+)*\]|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*|_[^_\s][^_]*_|`[^`]+`|\[\d+(?:\s*[,;–-]\s*\d+)*\](?:\[\d+(?:\s*[,;–-]\s*\d+)*\])*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;

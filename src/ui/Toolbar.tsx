@@ -1,4 +1,4 @@
-import { Compass, Hand, Home, Maximize, Minus, Plus, Route, Rows3, ScanLine } from 'lucide-react';
+import { Compass, Hand, Home, Maximize, Minus, Plus, Route, Rows3, ScanLine, Tags } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { STANDARD_VIEWS } from '../engine/cameraRig';
 import { viewer } from '../engine/viewer';
@@ -9,6 +9,8 @@ export function Toolbar({ onGuided }: { onGuided: () => void }) {
   const guided = useApp((s) => s.guided);
   const panMode = useApp((s) => s.panMode);
   const setPanMode = useApp((s) => s.setPanMode);
+  const labels = useApp((s) => s.labels);
+  const setLabels = useApp((s) => s.setLabels);
   const setImmersive = useApp((s) => s.setImmersive);
   const sliceOpen = useApp((s) => s.sliceOpen);
   const slicing = useApp((s) => s.explode > 0.001);
@@ -30,6 +32,9 @@ export function Toolbar({ onGuided }: { onGuided: () => void }) {
       </button>
       <button className={`icon-btn ${panMode ? 'on' : ''}`} onClick={() => setPanMode(!panMode)} aria-pressed={panMode} aria-label="Pan mode" title={panMode ? 'Pan mode on: drag moves the model in any direction (click to return to rotate)' : 'Pan mode: drag to move the model in any direction'}>
         <Hand size={17} />
+      </button>
+      <button className={`icon-btn ${labels ? 'on' : ''}`} onClick={() => setLabels(!labels)} aria-pressed={labels} aria-label="Labels" title={labels ? 'Hide structure labels (L)' : 'Show structure labels (L)'}>
+        <Tags size={17} />
       </button>
       <span className="tb-sep" />
       <button className="icon-btn" onClick={() => viewer.fullBody()} aria-label="Full body" title="Full body, keep angle">

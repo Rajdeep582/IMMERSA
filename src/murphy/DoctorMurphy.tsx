@@ -1,4 +1,5 @@
-import { AlertTriangle, ArrowUp, BookOpen, ChevronDown, ExternalLink, RotateCcw, Square, Stethoscope, WifiOff, X } from 'lucide-react';
+import { AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, Copy, ExternalLink, Maximize2, Minimize2, RotateCcw, Square, WifiOff, X } from 'lucide-react';
+import { DoctorAvatar } from './DoctorAvatar';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ChatTurn, Source } from '../../server/murphy/types';
@@ -21,6 +22,14 @@ interface Msg {
 }
 
 const STORE_KEY = 'immersa.murphy.chat';
+const FULL_KEY = 'immersa.murphy.full';
+/** One-tap follow-ups shown under the latest answer. */
+const FOLLOW_UPS: [string, string][] = [
+  ['More detail', 'Explain that in more detail.'],
+  ['Simpler', 'Explain that more simply, in 2–3 sentences.'],
+  ['Clinical relevance', 'What is the clinical relevance of that?'],
+  ['Memory aid', 'Give me a memory aid for that.'],
+];
 const STAGE_TEXT = { understanding: 'Understanding your question', searching: 'Searching PubMed, StatPearls & MedlinePlus', writing: 'Writing the answer' } as const;
 let seq = Date.now();
 
@@ -90,8 +99,15 @@ function Sources({ sources, open, onToggle }: { sources: Source[]; open: boolean
   );
 }
 
-function AssistantMsg({ m }: { m: Msg }) {
+function AssistantMsg({ m, last, onFollow }: { m: Msg; last: boolean; onFollow: (q: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(m.content.replace(/\[(\d+(?:[,\s]+\d+)*)\]/g, '')).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    });
+  };
   const ref = useRef<HTMLDivElement>(null);
   const cite = (n: number) => {
     setOpen(true);
@@ -99,9 +115,7 @@ function AssistantMsg({ m }: { m: Msg }) {
   };
   return (
     <div className="dm-msg bot" ref={ref}>
-      <div className="dm-avatar sm" aria-hidden>
-        <Stethoscope size={13} />
-      </div>
+      <DoctorAvatar size={30} state={m.streaming ? (m.content ? 'talking' : 'thinking') : 'idle'} className="dm-av-sm" />
       <div className="dm-bubble">
         {m.urgent && (
           <div className="dm-urgent" role="alert">
@@ -125,7 +139,23 @@ function AssistantMsg({ m }: { m: Msg }) {
           </div>
         ) : null}
         {m.error && <div className="dm-error">{m.error}</div>}
-        {!m.streaming && m.sources && <Sources sources={m.sources} open={open} onToggle={() => setOpen((o) => !o)} />}
+        {!m.streaming && m.content && (
+          <div className="dm-tools">
+            {m.sources && <Sources sources={m.sources} open={open} onToggle={() => setOpen((o) => !o)} />}
+            <button className="dm-copy" onClick={copy} aria-label="Copy answer" title="Copy answer">
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
+          </div>
+        )}
+        {last && !m.streaming && m.content && !m.error && (
+          <div className="dm-follow" role="group" aria-label="Follow-up questions">
+            {FOLLOW_UPS.map(([label, q]) => (
+              <button key={label} onClick={() => onFollow(q)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -136,6 +166,22 @@ export function DoctorMurphy({ placement }: { placement: string }) {
   const [msgs, setMsgs] = useState<Msg[]>(loadChat);
   const [input, setInput] = useState('');
   const [avail, setAvail] = useState<Availability>('unknown');
+  const [full, setFull] = useState(() => {
+    try {
+      return localStorage.getItem(FULL_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleFull = () =>
+    setFull((f) => {
+      try {
+        localStorage.setItem(FULL_KEY, f ? '0' : '1');
+      } catch {
+        /* ignore */
+      }
+      return !f;
+    });
   const online = useOnline();
   const route = useRoute();
   const selectedId = useApp((s) => s.selectedId);
@@ -143,6 +189,9 @@ export function DoctorMurphy({ placement }: { placement: string }) {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const busy = msgs.some((m) => m.streaming);
+  const live = msgs.find((m) => m.streaming);
+  const headState = live ? (live.content ? 'talking' : 'thinking') : 'idle';
+  const lastBot = [...msgs].reverse().find((m) => m.role === 'assistant')?.id;
   // Re-read the focus label whenever selection or page changes.
   const focus = (void selectedId, void route, focusLabel());
 
@@ -245,7 +294,10 @@ export function DoctorMurphy({ placement }: { placement: string }) {
     <div className={`dm-root ${placement}`}>
       <button className={`dm-fab ${open ? 'hidden' : ''} ${online ? '' : 'off'}`} onClick={() => setOpen(true)} aria-label="Ask Doctor Murphy" title="Doctor Murphy — medical study assistant">
         <span className="dm-fab-ring" aria-hidden />
-        <Stethoscope size={22} />
+        <DoctorAvatar size={58} state="idle" className="dm-fab-av" />
+        <span className="dm-fab-tip" aria-hidden>
+          Ask Dr Murphy
+        </span>
         {!online && (
           <span className="dm-fab-off" aria-hidden>
             <WifiOff size={10} />
@@ -254,11 +306,9 @@ export function DoctorMurphy({ placement }: { placement: string }) {
       </button>
 
       {open && (
-        <section className="dm-panel" role="dialog" aria-label="Doctor Murphy chat">
+        <section className={`dm-panel ${full ? 'full' : 'card'}`} role="dialog" aria-label="Doctor Murphy chat">
           <header className="dm-head">
-            <div className="dm-avatar" aria-hidden>
-              <Stethoscope size={18} />
-            </div>
+            <DoctorAvatar size={42} state={headState} className="dm-av-head" />
             <div className="dm-id">
               <div className="dm-name">Doctor Murphy</div>
               <div className="dm-sub">
@@ -270,6 +320,9 @@ export function DoctorMurphy({ placement }: { placement: string }) {
                 <RotateCcw size={16} />
               </button>
             )}
+            <button className="dm-icon" onClick={toggleFull} aria-label={full ? 'Exit full screen' : 'Full screen'} title={full ? 'Exit full screen' : 'Full screen'}>
+              {full ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+            </button>
             <button className="dm-icon" onClick={() => setOpen(false)} aria-label="Close Doctor Murphy">
               <X size={18} />
             </button>
@@ -284,9 +337,7 @@ export function DoctorMurphy({ placement }: { placement: string }) {
             {msgs.length === 0 && (
               <div className="dm-empty">
                 <div className="dm-hello">
-                  <div className="dm-avatar lg" aria-hidden>
-                    <Stethoscope size={26} />
-                  </div>
+                  <DoctorAvatar size={84} state="idle" className="dm-av-hello" />
                   <h3>Hi, I’m Doctor Murphy</h3>
                   <p>Ask me about anatomy, physiology, pathology, diagnosis or treatment. I search PubMed, StatPearls and MedlinePlus and cite what I use. Typos are fine.</p>
                   <p className="dm-privacy">Please don’t share names or other personal details.</p>
@@ -306,7 +357,7 @@ export function DoctorMurphy({ placement }: { placement: string }) {
                   <div className="dm-bubble">{m.content}</div>
                 </div>
               ) : (
-                <AssistantMsg key={m.id} m={m} />
+                <AssistantMsg key={m.id} m={m} last={m.id === lastBot} onFollow={(q) => void send(q)} />
               ),
             )}
           </div>

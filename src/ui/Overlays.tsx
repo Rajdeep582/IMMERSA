@@ -5,6 +5,7 @@ import type { Registry } from '../data/registry';
 import { viewer } from '../engine/viewer';
 import { useApp } from '../state/store';
 import { useStats } from '../state/stats';
+import { SYSTEMS } from '../data/systems';
 
 export function HoverLabel({ registry }: { registry: Registry }) {
   const id = useApp((s) => s.hoveredId);
@@ -77,23 +78,23 @@ const STAGE: Partial<Record<string, string>> = {
 export function LoadingVeil() {
   const status = useApp((s) => s.systemStatus);
   // Intro only on the very first load; later model switches keep the scene interactive.
-  const first = status.skeletal === 'ready' || status.integumentary === 'ready' || everReady;
-  if (first) everReady = true;
   const loading = Object.entries(status).filter(([, v]) => v === 'loading').map(([k]) => k);
+  // The intro stays until every start-up system has arrived, so the first view is complete.
+  const eagerIds = SYSTEMS.filter((m) => m.eager).map((m) => m.id);
+  const settled = eagerIds.filter((id) => status[id] === 'ready' || status[id] === 'error').length;
+  const first = everReady || (status.skeletal === 'ready' && settled >= eagerIds.length);
+  if (first) everReady = true;
   const hiRes = useApp((s) => s.hiResRegion);
   useEffect(() => {
     const intro = window.__intro;
     if (!intro) return;
     if (first) return intro.done();
-    const vals = Object.values(status);
-    const ready = vals.filter((v) => v === 'ready').length;
-    // Skin + skeleton gate the first view: weight the bar toward them.
-    const f = 0.12 + 0.8 * Math.min(1, (ready + 0.5 * loading.length) / 3);
+    const f = 0.06 + 0.9 * Math.min(1, (settled + 0.25 * loading.length) / eagerIds.length);
     intro.progress(f, loading.length ? (STAGE[loading[0]!] ?? 'Loading anatomy') : 'Loading anatomy data');
-  }, [first, status, loading.length]);
+  }, [first, status, loading.length, settled, eagerIds.length]);
   useEffect(() => {
     // Never leave the intro up if something stalls.
-    const t = window.setTimeout(() => window.__intro?.done(), 30000);
+    const t = window.setTimeout(() => window.__intro?.done(), 45000);
     return () => clearTimeout(t);
   }, []);
   return (

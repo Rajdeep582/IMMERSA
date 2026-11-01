@@ -52,6 +52,10 @@ export interface Plan {
   urgent: boolean;
   /** False for greetings / app questions that need no literature. */
   retrieve: boolean;
+  /** The exact aspect asked (e.g. "function only", "nerve supply"), used to keep answers on point. */
+  focus: string;
+  /** How much the student asked for: brief (default), standard, or detailed (only when explicitly asked). */
+  depth: 'brief' | 'standard' | 'detailed';
 }
 
 /** Server-sent events, one JSON object per `data:` line. */
