@@ -25,6 +25,8 @@ export interface AppState {
   bodyModel: BodyModel;
   /** Model-only view: panels hidden, single info line at the bottom. */
   immersive: boolean;
+  layout: 'phone' | 'tablet' | 'desktop';
+  setLayout: (l: 'phone' | 'tablet' | 'desktop') => void;
   /** One-finger / left-button drag pans instead of rotating. */
   panMode: boolean;
   setImmersive: (v: boolean) => void;
@@ -39,7 +41,12 @@ export interface AppState {
   selectedId: string | null;
   hoveredId: string | null;
   hoverPos: { x: number; y: number } | null;
+  /** Slice dissection amount 0–1 (vertical slabs; selected part only, rest ghosted). */
   explode: number;
+  /** Number of vertical slabs for the slice dissection. */
+  sliceCount: number;
+  /** Floating slice-dissection control visible. */
+  sliceOpen: boolean;
   inspectorOpen: boolean;
   leftOpen: boolean;
   rightOpen: boolean;
@@ -62,6 +69,8 @@ export interface AppState {
   select: (id: string | null) => void;
   hover: (id: string | null, pos?: { x: number; y: number } | null) => void;
   setExplode: (v: number) => void;
+  setSliceCount: (n: number) => void;
+  setSliceOpen: (v: boolean) => void;
   setInspectorOpen: (v: boolean) => void;
   setLeftOpen: (v: boolean) => void;
   setRightOpen: (v: boolean) => void;
@@ -92,6 +101,8 @@ const initialModel = (): BodyModel => {
 export const useApp = create<AppState>((set, get) => ({
   bodyModel: initialModel(),
   immersive: false,
+  layout: 'desktop',
+  setLayout: (layout) => set({ layout }),
   panMode: false,
   setImmersive: (immersive) => set({ immersive }),
   setPanMode: (panMode) => set({ panMode }),
@@ -114,7 +125,6 @@ export const useApp = create<AppState>((set, get) => ({
       explode: 0,
       guided: null,
       hiResRegion: null,
-      inspectorOpen: mappedSelection ? get().inspectorOpen : false,
     });
   },
   ready: false,
@@ -128,6 +138,8 @@ export const useApp = create<AppState>((set, get) => ({
   hoveredId: null,
   hoverPos: null,
   explode: 0,
+  sliceCount: 12,
+  sliceOpen: false,
   inspectorOpen: false,
   leftOpen: true,
   rightOpen: true,
@@ -160,7 +172,8 @@ export const useApp = create<AppState>((set, get) => ({
   setIsolate: (isolate) => set({ isolate }),
   select: (id) => {
     if (get().selectedId === id) return;
-    set({ selectedId: id, explode: 0 });
+    // Selecting during a slice dissection keeps it running: the new selection becomes the dissected part.
+    set({ selectedId: id });
   },
   hover: (id, pos = null) => {
     const s = get();
@@ -168,6 +181,8 @@ export const useApp = create<AppState>((set, get) => ({
       set({ hoveredId: id, hoverPos: id ? pos : null });
   },
   setExplode: (explode) => set({ explode }),
+  setSliceCount: (sliceCount) => set({ sliceCount }),
+  setSliceOpen: (sliceOpen) => set({ sliceOpen }),
   setInspectorOpen: (inspectorOpen) => set({ inspectorOpen }),
   setLeftOpen: (leftOpen) => set({ leftOpen }),
   setRightOpen: (rightOpen) => set({ rightOpen }),

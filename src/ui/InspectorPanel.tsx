@@ -1,6 +1,5 @@
-import { Box, Crosshair, Eye, EyeOff, FlipHorizontal2, Layers2, Shrink, Target, X } from 'lucide-react';
+import { Activity, Box, ChevronRight, Crosshair, Droplet, Eye, EyeOff, FlipHorizontal2, GraduationCap, Info, Layers2, Layers3, MapPin, Shrink, Star, Stethoscope, Target, X, Zap } from 'lucide-react';
 import { useMemo } from 'react';
-import { curatedFor } from '../data/curated';
 import { BODYPARTS3D, HRA, fmaRef, ontRef } from '../data/references';
 import type { Registry } from '../data/registry';
 import { SYSTEM_BY_ID } from '../data/systems';
@@ -9,7 +8,11 @@ import { viewer } from '../engine/viewer';
 import type { QualityProfile } from '../engine/quality';
 import { InspectViewport } from '../scene/InspectViewport';
 import { Breadcrumbs } from './Breadcrumbs';
+import { SliceControl } from './SliceControl';
 import { useApp } from '../state/store';
+import { SYSTEM_TOPICS, TOPIC_BY_ID, studyFor, type Study } from '../learn';
+import { Rich } from '../learn/Rich';
+import { openLearn } from '../learn/route';
 
 function Chips({ items, max = 18 }: { items: StructureRecord[]; max?: number }) {
   if (!items.length) return null;
@@ -35,6 +38,94 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+const STUDY_SECTIONS: { key: 'location' | 'structure' | 'functions' | 'clinical' | 'key'; label: string; Icon: typeof MapPin; numbered?: boolean }[] = [
+  { key: 'location', label: 'Location', Icon: MapPin },
+  { key: 'structure', label: 'Structure', Icon: Layers3 },
+  { key: 'functions', label: 'Function', Icon: Activity, numbered: true },
+  { key: 'clinical', label: 'Clinical significance', Icon: Stethoscope },
+  { key: 'key', label: 'Key points', Icon: Star },
+];
+
+/** Structured study card: what it is → location → structure → function → clinical → key points. */
+function StudyCard({ study, registry, topicTitle }: { study: Study; registry: Registry; topicTitle?: string }) {
+  const link = (id: string) => viewer.selectAndFocus(id);
+  const present = STUDY_SECTIONS.filter((x) => (study[x.key]?.length ?? 0) > 0);
+  const jump = (k: string) => document.getElementById(`sc-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return (
+    <section className={`study ${study.source}`}>
+      <p className="study-what">
+        <Rich text={study.what} registry={registry} onLink={link} />
+      </p>
+      {present.length > 1 && (
+        <nav className="study-nav" aria-label="Study card sections">
+          {present.map((x) => (
+            <button key={x.key} onClick={() => jump(x.key)}>
+              {x.label}
+            </button>
+          ))}
+        </nav>
+      )}
+      {present.map(({ key, label, Icon, numbered }) => {
+        const items = study[key]!;
+        const L = numbered && items.length > 1 ? 'ol' : 'ul';
+        return (
+          <div key={key} id={`sc-${key}`} className={`study-sec k-${key}`}>
+            <h3>
+              <Icon size={14} aria-hidden /> {label}
+            </h3>
+            <L>
+              {items.map((t, i) => (
+                <li key={i}>
+                  <Rich text={t} registry={registry} onLink={link} />
+                </li>
+              ))}
+            </L>
+          </div>
+        );
+      })}
+      {(study.innervation || study.blood) && (
+        <dl className="study-facts">
+          {study.innervation && (
+            <div>
+              <dt>
+                <Zap size={13} /> Nerve supply
+              </dt>
+              <dd>
+                <Rich text={study.innervation} registry={registry} onLink={link} />
+              </dd>
+            </div>
+          )}
+          {study.blood && (
+            <div>
+              <dt>
+                <Droplet size={13} /> Blood supply
+              </dt>
+              <dd>
+                <Rich text={study.blood} registry={registry} onLink={link} />
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+      {study.source === 'derived' && (
+        <p className="study-note">
+          <Info size={13} /> No dedicated card yet: location and contents come from the model hierarchy{study.from ? `; function and clinical notes are those of the ${study.from.toLowerCase()}` : ''}.
+        </p>
+      )}
+      {study.topic && topicTitle && (
+        <button className="study-more" onClick={() => openLearn(study.topic!)}>
+          <GraduationCap size={16} />
+          <span>
+            <small>Study guide</small>
+            {topicTitle}
+          </span>
+          <ChevronRight size={16} />
+        </button>
+      )}
+    </section>
+  );
+}
+
 export function InspectorPanel({ registry, quality, onClose }: { registry: Registry; quality: QualityProfile; onClose?: () => void }) {
   const selectedId = useApp((s) => s.selectedId);
   const inspectorOpen = useApp((s) => s.inspectorOpen);
@@ -45,8 +136,6 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
   const faded = useApp((s) => s.faded);
   const toggleHidden = useApp((s) => s.toggleHidden);
   const toggleFaded = useApp((s) => s.toggleFaded);
-  const explode = useApp((s) => s.explode);
-  const setExplode = useApp((s) => s.setExplode);
   const rec = registry.get(selectedId);
 
   const info = useMemo(() => {
@@ -61,7 +150,7 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
       lo += registry.manifest.units[u]?.lo ?? 0;
       hi += registry.manifest.units[u]?.hi ?? 0;
     }
-    return { children, neighbours, counterpart, units, lo, hi, curated: curatedFor(rec.name), parent: registry.get(rec.parent) };
+    return { children, neighbours, counterpart, units, lo, hi, study: studyFor(registry, rec), parent: registry.get(rec.parent) };
   }, [rec, registry]);
 
   if (!rec || !info) {
@@ -86,8 +175,18 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
           </div>
         </div>
         <p className="es-lead">Click any structure in the body, pick one from the hierarchy, or search by name.</p>
+        <SliceControl registry={registry} variant="in-panel" />
         <h3 className="es-h">Start with</h3>
         <Chips items={picks} max={8} />
+        <h3 className="es-h">Study guides</h3>
+        <div className="chips">
+          {SYSTEM_TOPICS.map((t) => (
+            <button key={t.id} className="chip link" onClick={() => openLearn(t.id)}>
+              <span className="swatch xs" style={{ background: SYSTEM_BY_ID[t.system].swatch }} />
+              {t.title}
+            </button>
+          ))}
+        </div>
         <h3 className="es-h">Controls</h3>
         <dl className="keys">
           <dt>Drag</dt>
@@ -121,7 +220,8 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
   const isHidden = hidden.has(rec.id);
   const isFaded = faded.has(rec.id);
   const isBone = rec.system === 'skeletal' && rec.kind === 'structure' && !/cartilage|disk|ligament|membrane|tooth/i.test(rec.name);
-  const c = info.curated;
+  const st = info.study;
+  const topic = st.topic ? TOPIC_BY_ID.get(st.topic) : undefined;
 
   return (
     <div className="inspector">
@@ -176,34 +276,22 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
         )}
       </div>
 
-      {rec.kind !== 'structure' && rec.children.length > 1 && (
-        <div className="explode">
-          <label htmlFor="explode">Separate parts</label>
-          <input id="explode" type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(Number(e.target.value))} style={{ ['--v' as string]: `${explode * 100}%` }} />
-          {explode > 0.01 && <div className="explode-note">Exploded study view — parts are displaced from their anatomical positions.</div>}
+      <SliceControl registry={registry} variant="in-panel" />
+
+      {inspectorOpen && (
+        <div className="insp-3d">
+          <div className="insp-3d-h">
+            <span>Isolated 3D view</span>
+            <button className="xlink" onClick={() => setInspectorOpen(false)}>
+              Hide
+            </button>
+          </div>
+          <InspectViewport registry={registry} targetId={rec.id} quality={quality} />
         </div>
       )}
 
-      {inspectorOpen && <InspectViewport registry={registry} targetId={rec.id} quality={quality} />}
-
       <div className="insp-body">
-        {c ? (
-          <section className="curated">
-            <p className="summary">{c.summary}</p>
-            <dl>
-              {c.function && <Field label="Function">{c.function}</Field>}
-              {c.relations && <Field label="Relations">{c.relations}</Field>}
-              {c.innervation && <Field label="Innervation">{c.innervation}</Field>}
-              {c.bloodSupply && <Field label="Blood supply">{c.bloodSupply}</Field>}
-              {c.clinical && <Field label="Educational note">{c.clinical}</Field>}
-            </dl>
-          </section>
-        ) : (
-          <p className="muted small">
-            No curated description for this structure yet. The name, identifier and hierarchy below come from{' '}
-            {registry.model === 'female' ? 'the HRA 3D reference organs and their ontology crosswalk' : 'the FMA via BodyParts3D'}.
-          </p>
-        )}
+        <StudyCard study={st} registry={registry} topicTitle={topic?.title} />
 
         <dl className="facts">
           {rec.fma && (
@@ -252,7 +340,7 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
         <section className="refs">
           <h3>References</h3>
           <ul>
-            {(c?.refs ?? []).map((r) => (
+            {st.refs.map((r) => (
               <li key={r.label}>
                 <a href={r.url} target="_blank" rel="noreferrer">
                   {r.label}

@@ -9,10 +9,10 @@ import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { quantize, meshopt } from '@gltf-transform/functions';
 import { MeshoptSimplifier, MeshoptEncoder } from 'meshoptimizer';
 
-const LIB = process.env.HRA_LIB ?? 'raw/hra/ccf-3d-reference-object-library/VH_Female';
-const XWALK = process.env.HRA_XWALK ?? 'raw/hra/ccf-releases/v2.0/models/asct-b-3d-models-crosswalk.csv';
-const OUT_DATA = process.argv[2] ?? 'public/data/female';
-const OUT_MODELS = process.argv[3] ?? 'public/models/female';
+const LIB = process.env.HRA_LIB ?? '/home/claude/raw/hra/lib/VH_Female';
+const XWALK = process.env.HRA_XWALK ?? '/home/claude/raw/hra/rel/v2.0/models/asct-b-3d-models-crosswalk.csv';
+const OUT_DATA = process.argv[2] ?? 'out/female/data';
+const OUT_MODELS = process.argv[3] ?? 'out/female/models';
 await MeshoptSimplifier.ready;
 await MeshoptEncoder.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
@@ -157,13 +157,19 @@ function compact(pos, nrm, idx) {
   return { pos: p, nrm: n, idx: out };
 }
 function computeNormals(pos, idx) {
+  // Angle-weighted vertex normals: stable on the long thin triangles of coarse HRA meshes,
+  // where area weighting smears shading into a rubbery look.
   const n = new Float32Array(pos.length);
+  const ang = (ax, ay, az, bx, by, bz) => { const l = Math.hypot(ax, ay, az) * Math.hypot(bx, by, bz) || 1; return Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by + az * bz) / l))); };
   for (let i = 0; i < idx.length; i += 3) {
     const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
     const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
     const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
-    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    for (const k of [a, b, c]) { n[k] += nx; n[k + 1] += ny; n[k + 2] += nz; }
+    const wx = pos[c] - pos[b], wy = pos[c + 1] - pos[b + 1], wz = pos[c + 2] - pos[b + 2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz); if (!l) continue; nx /= l; ny /= l; nz /= l;
+    const wa = ang(ux, uy, uz, vx, vy, vz), wb = ang(-ux, -uy, -uz, wx, wy, wz), wc = Math.PI - wa - wb;
+    for (const [k, w] of [[a, wa], [b, wb], [c, wc]]) { n[k] += nx * w; n[k + 1] += ny * w; n[k + 2] += nz * w; }
   }
   for (let i = 0; i < n.length; i += 3) { const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1; n[i] /= l; n[i + 1] /= l; n[i + 2] /= l; }
   return n;
@@ -184,9 +190,10 @@ function weld(pos, idx) {
   }
   return { pos: new Float32Array(np), idx: new Uint32Array(tri) };
 }
-function simplify(g, errM) {
-  if (g.idx.length < 300) return g;
-  const target = Math.max(36, Math.floor((g.idx.length * 0.02) / 3) * 3);
+function simplify(g, errM, keepTris = 0, minRatio = 0.02) {
+  // Small source meshes are already coarse: keep them at full resolution so they never drop below the male detail level.
+  if (g.idx.length < 300 || g.idx.length / 3 <= keepTris) return g;
+  const target = Math.max(36, Math.floor((g.idx.length * minRatio) / 3) * 3);
   const [ind] = MeshoptSimplifier.simplify(g.idx, g.pos, 3, target, errM, ['ErrorAbsolute']);
   if (ind.length >= g.idx.length * 0.95) return g;
   return compact(g.pos, g.nrm, ind);
@@ -208,7 +215,7 @@ async function writeGlb(file, items) {
 // ---------- read all sources ----------
 const units = []; // { id, name, side, system, group, ont, label, geo, bbox, src }
 const seen = new Set();
-let flipped = 0;
+let flipped = 0, flipped2 = 0;
 const mat4 = (m, x, y, z) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
 for (const src of SOURCES) {
   const doc = await io.read(src.file);
@@ -241,7 +248,20 @@ for (const src of SOURCES) {
     }
     if (vol < 0) for (let i = 0; i < w.idx.length; i += 3) { const t = w.idx[i + 1]; w.idx[i + 1] = w.idx[i + 2]; w.idx[i + 2] = t; }
     if (vol < 0) flipped++;
-    const nrm = computeNormals(w.pos, w.idx);
+    let nrm = computeNormals(w.pos, w.idx);
+    // Open patches (liver segments, vessel stubs) give no reliable signed volume; fall back to a
+    // centroid test and flip when the normals clearly point inward.
+    {
+      const nv = w.pos.length / 3; const c = [0, 0, 0];
+      for (let i = 0; i < nv; i++) { c[0] += w.pos[i * 3]; c[1] += w.pos[i * 3 + 1]; c[2] += w.pos[i * 3 + 2]; }
+      c[0] /= nv; c[1] /= nv; c[2] /= nv; let out = 0;
+      for (let i = 0; i < nv; i++) if ((w.pos[i * 3] - c[0]) * nrm[i * 3] + (w.pos[i * 3 + 1] - c[1]) * nrm[i * 3 + 1] + (w.pos[i * 3 + 2] - c[2]) * nrm[i * 3 + 2] > 0) out++;
+      if (out / nv < 0.25) {
+        for (let i = 0; i < w.idx.length; i += 3) { const t = w.idx[i + 1]; w.idx[i + 1] = w.idx[i + 2]; w.idx[i + 2] = t; }
+        for (let i = 0; i < nrm.length; i++) nrm[i] = -nrm[i];
+        flipped2++;
+      }
+    }
     const { name, side } = pretty(id);
     const xw = xwalk.get(id) ?? {};
     units.push({ id, name, side, system: src.system, group: src.group, ont: xw.ont ?? null, label: xw.label ?? null, geo: { pos: w.pos, nrm, idx: w.idx }, src: path.basename(src.file) });
@@ -253,7 +273,7 @@ const bb = (pos) => { const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9]; for (
 const sb = bb(skin.geo.pos);
 const C = [0, (sb[0][1] + sb[1][1]) / 2, (sb[0][2] + sb[1][2]) / 2];
 for (const u of units) { const p = u.geo.pos; for (let i = 0; i < p.length; i += 3) { p[i + 1] -= C[1]; p[i + 2] -= C[2]; } u.bbox = bb(p).map((a) => a.map((x) => +x.toFixed(5))); }
-console.log('units', units.length, 'flipped', flipped, 'centre shift', C);
+console.log('units', units.length, 'flipped', flipped, 'centroid-flipped', flipped2, 'centre shift', C);
 
 // ---------- hierarchy ----------
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -366,7 +386,11 @@ for (const n of nodes.values()) {
 for (const u of units) reg.units[u.id] = { structure: `F:${u.id}`, system: u.system };
 
 // ---------- meshes ----------
-const ERR = { integumentary: 0.0006, muscular: 0.0005, skeletal: 0.0003, cardiovascular: 0.00035, nervous: 0.0003, respiratory: 0.0004, digestive: 0.0004, sensory: 0.00015, urinary: 0.0003, reproductive: 0.0003, endocrine: 0.0003, lymphatic: 0.0003 };
+// Body-view tolerances matched to the male BodyParts3D build (metres). Female sources are coarser,
+// so meshes under KEEP triangles stay full-resolution and larger ones keep at least MIN_RATIO.
+const ERR = { integumentary: 0.0004, muscular: 0.00012, skeletal: 0.00015, cardiovascular: 0.00015, nervous: 0.00015, respiratory: 0.00015, digestive: 0.0001, sensory: 0.0001, urinary: 0.00012, reproductive: 0.00012, endocrine: 0.00012, lymphatic: 0.00012 };
+const KEEP = { integumentary: 0, muscular: 40000, skeletal: 6000, cardiovascular: 3000, nervous: 6000, respiratory: 8000, digestive: 40000, sensory: 4000, urinary: 12000, reproductive: 20000, endocrine: 8000, lymphatic: 6000 };
+const MIN_RATIO = { integumentary: 0.25, muscular: 0.6, skeletal: 0.3, cardiovascular: 0.25, nervous: 0.22, respiratory: 0.3, digestive: 0.6, sensory: 0.4, urinary: 0.4, reproductive: 0.28, endocrine: 0.4, lymphatic: 0.35 };
 fs.mkdirSync(path.join(OUT_MODELS, 'hi'), { recursive: true });
 fs.mkdirSync(OUT_DATA, { recursive: true });
 const manifest = { generated: new Date().toISOString(), systems: {}, units: {} };
@@ -375,7 +399,7 @@ for (const sys of reg.systems) {
   const su = units.filter((u) => u.system === sys);
   const lo = [], hiChunks = {}; let tLo = 0, tHi = 0;
   for (const u of su) {
-    const g1 = simplify(u.geo, ERR[sys]);
+    const g1 = simplify(u.geo, ERR[sys], KEEP[sys], MIN_RATIO[sys]);
     lo.push({ id: u.id, g: g1 });
     tLo += g1.idx.length / 3; tHi += u.geo.idx.length / 3;
     const chunk = `${sys}__${slug(topGroup(`F:${u.id}`))}`;

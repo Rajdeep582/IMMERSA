@@ -1,4 +1,4 @@
-import { Compass, Hand, Home, Maximize, Minus, Plus, Route, ScanLine } from 'lucide-react';
+import { Compass, Hand, Home, Maximize, Minus, Plus, Route, Rows3, ScanLine } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { STANDARD_VIEWS } from '../engine/cameraRig';
 import { viewer } from '../engine/viewer';
@@ -10,6 +10,9 @@ export function Toolbar({ onGuided }: { onGuided: () => void }) {
   const panMode = useApp((s) => s.panMode);
   const setPanMode = useApp((s) => s.setPanMode);
   const setImmersive = useApp((s) => s.setImmersive);
+  const sliceOpen = useApp((s) => s.sliceOpen);
+  const slicing = useApp((s) => s.explode > 0.001);
+  const setSliceOpen = useApp((s) => s.setSliceOpen);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!viewsOpen) return;
@@ -61,6 +64,10 @@ export function Toolbar({ onGuided }: { onGuided: () => void }) {
         <Maximize size={16} />
       </button>
       <span className="tb-sep" />
+      <button className={`tb-text slice-btn ${sliceOpen || slicing ? 'on' : ''}`} onClick={() => setSliceOpen(!sliceOpen)} aria-pressed={sliceOpen} title="Slice dissection: cut the body (or the selected part) into vertical slabs">
+        <Rows3 size={16} />
+        <span>Slice</span>
+      </button>
       <button className={`tb-text ${guided ? 'on' : ''}`} onClick={onGuided} aria-pressed={!!guided} title="Guided anatomical journeys (G)">
         <Route size={16} />
         <span>{guided ? 'Exit journey' : 'Journeys'}</span>

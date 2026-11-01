@@ -25,6 +25,7 @@ const viewStateOf = (s: ReturnType<typeof useApp.getState>): ViewState => ({
   selectedId: s.selectedId,
   hoveredId: s.hoveredId,
   explode: s.explode,
+  sliceCount: s.sliceCount,
 });
 
 function Lighting() {
@@ -171,7 +172,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
           drillHinted = true;
           st.showHint(`${stack.length} structures under the pointer. Click the same spot again to select the next one behind.`);
         }
-        if (!st.rightOpen && !st.immersive && type === 'mouse') st.setRightOpen(true);
+        if (!st.rightOpen && !st.immersive && st.layout !== 'phone' && !st.guided) st.setRightOpen(true);
         invalidate();
       },
       onDoubleTap: (x, y) => {
@@ -223,7 +224,8 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
         s.isolate !== p.isolate ||
         s.selectedId !== p.selectedId ||
         s.hoveredId !== p.hoveredId ||
-        s.explode !== p.explode
+        s.explode !== p.explode ||
+        s.sliceCount !== p.sliceCount
       ) {
         anat.applyState(viewStateOf(s));
         invalidate();
@@ -321,15 +323,16 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
       const W = size.width;
       const imm = !!document.querySelector('.app.immersive');
       const l = imm ? 0 : (document.querySelector('.panel.left.open')?.getBoundingClientRect().right ?? 0);
-      const rEl = imm ? null : document.querySelector('.panel.right.open, .guided');
+      const rEl = imm ? null : document.querySelector('.panel.right.open, .guided, .app.landscape .sheet');
       const r = rEl && !document.querySelector('.app.mobile') ? W - rEl.getBoundingClientRect().left : 0;
       o.goal = l > W * 0.6 || r > W * 0.6 ? 0 : (r - l) / 2;
       // Bottom sheets / mobile journey panel cover the lower part of the screen.
-      const bEl = imm ? null : document.querySelector('.sheet, .app.mobile .guided');
+      const bEl = imm || document.querySelector('.app.landscape') ? null : document.querySelector('.sheet, .app.mobile .guided');
       const covered = bEl ? Math.max(0, size.height - bEl.getBoundingClientRect().top) : 0;
       // Centre the model in the band between the top bar and the bottom toolbar / info line.
-      const topPx = imm ? 0 : 64;
-      const bottomPx = imm ? 44 : 76;
+      const phone = !!document.querySelector('.app.mobile');
+      const topPx = imm ? 0 : phone ? 50 : 64;
+      const bottomPx = imm ? 44 : phone ? 72 : 76;
       o.goalY = covered > size.height * 0.85 ? 0 : covered / 2 - (topPx - bottomPx) / 2;
     }
     let shifting = false;

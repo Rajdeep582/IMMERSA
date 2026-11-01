@@ -4,7 +4,7 @@ import type { Registry } from '../data/registry';
 import type { SystemOpacity } from '../data/systems';
 import type { SystemId } from '../data/types';
 import type { AppState } from '../state/store';
-import { ACCENT, HOVER, createOutlineMaterial, createUnitMaterial } from './materials';
+import { ACCENT, HOVER, createOutlineMaterial, createSliceUniforms, createUnitMaterial, setDetailAxis } from './materials';
 import type { LoadedUnit } from './models';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -34,6 +34,8 @@ interface UnitView {
   outline: THREE.Mesh | null;
   offsetTarget: THREE.Vector3;
   offset: THREE.Vector3;
+  /** Part of the current vertical slice dissection. */
+  sliced: boolean;
 }
 
 export interface PickHit {
@@ -43,7 +45,19 @@ export interface PickHit {
   distance: number;
 }
 
-export type ViewState = Pick<AppState, 'opacity' | 'hidden' | 'faded' | 'isolate' | 'selectedId' | 'hoveredId' | 'explode'>;
+export type ViewState = Pick<AppState, 'opacity' | 'hidden' | 'faded' | 'isolate' | 'selectedId' | 'hoveredId' | 'explode'> & { sliceCount?: number };
+
+/** Current vertical (sagittal) slice dissection: region split along x into `n` slabs of width `h` from `y0`, spread by `gap`. */
+export interface SliceInfo {
+  target: string | null;
+  y0: number;
+  h: number;
+  n: number;
+  /** Gap the slabs are animating toward (metres between neighbouring slabs). */
+  gap: number;
+  /** Region bounds before separation. */
+  box: THREE.Box3;
+}
 
 /** Opacity below which a structure is not pickable (so ghosted context never steals clicks). */
 const PICK_MIN_OPACITY = 0.3;
@@ -64,6 +78,10 @@ export class AnatomyScene {
   private tier: 'low' | 'medium' | 'high';
   /** Units currently showing full-resolution geometry. */
   private hiActive = new Map<string, THREE.BufferGeometry>();
+  /** Shader uniforms shared by this scene's materials for the slice dissection. */
+  readonly slice = createSliceUniforms();
+  private sliceInfo: SliceInfo | null = null;
+  private sliceKey = '';
 
   constructor(
     private registry: Registry,
@@ -89,12 +107,14 @@ export class AnatomyScene {
       const sid = this.registry.unitStructure.get(u.fj);
       if (!sid) continue;
       const name = this.registry.get(sid)?.name ?? '';
-      const material = createUnitMaterial(system, name, u.fj, this.tier, !!this.registry.get(sid)?.landmark);
+      // Mirror-pair seed (HRA _L/_R) so left and right parts share one tint.
+      const material = createUnitMaterial(system, name, u.fj.replace(/_[LR]$/, ''), this.tier, !!this.registry.get(sid)?.landmark, this.registry.model === 'female', this.slice);
       const mesh = new THREE.Mesh(u.geometry, material);
       mesh.name = u.fj;
       mesh.position.copy(u.position);
       mesh.quaternion.copy(u.quaternion);
       mesh.scale.copy(u.scale);
+      setDetailAxis(material, mesh);
       mesh.matrixAutoUpdate = true;
       mesh.userData.fj = u.fj;
       const view: UnitView = {
@@ -119,15 +139,22 @@ export class AnatomyScene {
         outline: null,
         offsetTarget: new THREE.Vector3(),
         offset: new THREE.Vector3(),
+        sliced: false,
       };
       this.units.set(u.fj, view);
       this.root.add(mesh);
       if (this.state) this.computeUnit(view, this.state);
+      this.syncSliceFlag(view);
       // Newly arrived meshes fade in rather than popping.
       view.opacity = 0;
       this.syncMaterial(view);
     }
     this.pickDirty = true;
+    // Structures that arrive while dissecting join the slab layout (recompute the region).
+    if (this.state && this.state.explode > 0.001) {
+      this.sliceKey = '';
+      this.updateSlicing(this.state, this.state);
+    }
   }
 
   /** Swap a unit to a full-resolution geometry (same transform frame), or back to body LOD with null. */
@@ -198,19 +225,11 @@ export class AnatomyScene {
   /** Recompute per-unit targets from application state. Cheap: O(units × depth). */
   applyState(st: ViewState) {
     const prevSel = this.state?.selectedId;
+    const prev = this.state;
     this.state = st;
     if (st.selectedId !== prevSel) this.selectedAt = performance.now();
-    // Explode: children of the selected node fan out from its centre.
-    const explodeMap = new Map<string, THREE.Vector3>();
-    const sel = this.registry.get(st.selectedId);
-    if (sel && sel.kind !== 'structure' && sel.children.length > 1 && st.explode > 0.001) {
-      const g = new THREE.Vector3(...this.registry.center(sel.id));
-      for (const c of sel.children) {
-        const cc = new THREE.Vector3(...this.registry.center(c)).sub(g).multiplyScalar(st.explode * 1.1);
-        explodeMap.set(c, cc);
-      }
-    }
-    for (const v of this.units.values()) this.computeUnit(v, st, explodeMap);
+    for (const v of this.units.values()) this.computeUnit(v, st);
+    this.updateSlicing(st, prev);
     this.selCount = 0;
     this.hoverCount = 0;
     for (const v of this.units.values()) {
@@ -220,7 +239,70 @@ export class AnatomyScene {
     for (const v of this.units.values()) this.syncOutline(v);
   }
 
-  private computeUnit(v: UnitView, st: ViewState, explodeMap?: Map<string, THREE.Vector3>) {
+  /**
+   * Vertical (sagittal) slice dissection driven by the "Separate" amount. Without a selection every
+   * visible structure is cut into vertical slabs that spread apart sideways; with a selection only that
+   * structure is cut and everything else is ghosted.
+   */
+  private updateSlicing(st: ViewState, prev: ViewState | null) {
+    const amount = st.explode;
+    const target = st.selectedId && this.registry.get(st.selectedId) ? st.selectedId : null;
+    const active = amount > 0.001;
+    // Region and slab layout only change with the selection, visibility or slab count, not with hover.
+    const key = active ? `${target}|${st.sliceCount ?? 12}` : '';
+    const visChanged = !prev || prev.opacity !== st.opacity || prev.hidden !== st.hidden || prev.isolate !== st.isolate || prev.faded !== st.faded;
+    if (!active) {
+      if (this.sliceInfo) this.sliceInfo.gap = 0;
+    } else if (key !== this.sliceKey || visChanged || !this.sliceInfo) {
+      const box = new THREE.Box3();
+      const tmp = new THREE.Box3();
+      for (const v of this.units.values()) {
+        if (!v.sliced || v.opacityTarget * v.baseOpacity < 0.004) continue;
+        const g = v.mesh.geometry;
+        if (!g.boundingBox) g.computeBoundingBox();
+        v.mesh.updateMatrixWorld();
+        box.union(tmp.copy(g.boundingBox!).applyMatrix4(v.mesh.matrixWorld));
+      }
+      if (!box.isEmpty()) {
+        const width = box.max.x - box.min.x;
+        const want = st.sliceCount ?? 12;
+        const n = Math.max(2, Math.min(want, Math.floor(width / 0.004)));
+        const h = width / n;
+        this.sliceInfo = { target, y0: box.min.x - 1e-5, h: h + 2e-5 / n, n, gap: 0, box };
+      }
+    }
+    this.sliceKey = key;
+    if (this.sliceInfo && active) this.sliceInfo.gap = amount * Math.max(this.sliceInfo.h * 1.1, 0.008);
+    if (this.sliceInfo) {
+      this.slice.uSliceY0.value = this.sliceInfo.y0;
+      this.slice.uSliceH.value = this.sliceInfo.h;
+      this.slice.uSliceN.value = this.sliceInfo.n;
+    }
+    for (const v of this.units.values()) this.syncSliceFlag(v);
+  }
+
+  private syncSliceFlag(v: UnitView) {
+    const on = v.sliced && !!this.sliceInfo;
+    const u = v.material.userData.sliceOn as { value: number } | undefined;
+    if (u) u.value = on ? 1 : 0;
+    const side = on ? THREE.DoubleSide : ((v.material.userData.baseSide as THREE.Side | undefined) ?? THREE.FrontSide);
+    if (v.material.side !== side) v.material.side = side;
+  }
+
+  /** Slab layout of the current dissection (null when not slicing). */
+  sliceState(): SliceInfo | null {
+    return this.sliceInfo && this.slice.uSliceGap.value > 1e-5 ? this.sliceInfo : null;
+  }
+
+  /** Bounds of the dissected region once fully separated at `gap`. */
+  slicedBounds(): THREE.Box3 | null {
+    const s = this.sliceInfo;
+    if (!s) return null;
+    const extra = ((s.n - 1) / 2) * s.gap;
+    return s.box.clone().expandByVector(new THREE.Vector3(extra, 0, 0));
+  }
+
+  private computeUnit(v: UnitView, st: ViewState) {
     const sys: SystemOpacity = st.opacity;
     let o = sys[v.system] ?? 0;
     const anc = v.ancestors;
@@ -231,19 +313,19 @@ export class AnatomyScene {
       if (!inside) o = st.isolate.mode === 'hide' ? 0 : Math.min(o, this.opts.ghostOpacity ?? 0.07);
       else if (o === 0) o = 1; // isolating a hidden system reveals it
     }
-    v.opacityTarget = o;
-    v.highlightTarget = st.selectedId && anc.includes(st.selectedId) ? 1 : 0;
-    v.hoverTarget = st.hoveredId && anc.includes(st.hoveredId) && !v.highlightTarget ? 1 : 0;
-    v.offsetTarget.set(0, 0, 0);
-    if (explodeMap && explodeMap.size) {
-      for (const a of anc) {
-        const off = explodeMap.get(a);
-        if (off) {
-          v.offsetTarget.copy(off);
-          break;
-        }
-      }
+    const slicing = st.explode > 0.001;
+    const inSel = !!st.selectedId && anc.includes(st.selectedId);
+    if (slicing && st.selectedId) {
+      // Selected structure is dissected; the rest of the body becomes faint context.
+      if (inSel) o = Math.max(o, 1);
+      else o = Math.min(o, 0.035);
     }
+    v.sliced = slicing && (st.selectedId ? inSel : true);
+    v.opacityTarget = o;
+    // Natural tissue colours while dissecting (no selection tint on the slabs).
+    v.highlightTarget = inSel && !slicing ? 1 : 0;
+    v.hoverTarget = st.hoveredId && anc.includes(st.hoveredId) && !v.highlightTarget && !slicing ? 1 : 0;
+    v.offsetTarget.set(0, 0, 0);
   }
 
   /** Advance per-unit transitions. Returns true while anything is still animating. */
@@ -253,6 +335,20 @@ export class AnatomyScene {
     let animating = false;
     const pulseT = (performance.now() - this.selectedAt) / 1000;
     const pulse = pulseT < 0.9 ? 1 + 0.9 * Math.sin((pulseT / 0.9) * Math.PI) : 1;
+    const gapTarget = this.sliceInfo?.gap ?? 0;
+    const g = this.slice.uSliceGap;
+    if (Math.abs(g.value - gapTarget) > 1e-5) {
+      g.value += (gapTarget - g.value) * (1 - Math.exp(-dt / 0.18));
+      animating = true;
+    } else if (g.value !== gapTarget) {
+      g.value = gapTarget;
+      if (gapTarget === 0 && this.sliceInfo) {
+        // Fully closed again: drop the slab layout and restore normal rendering.
+        this.sliceInfo = null;
+        for (const v of this.units.values()) this.syncSliceFlag(v);
+      }
+      animating = true;
+    }
     for (const v of this.units.values()) {
       let dirty = false;
       if (Math.abs(v.opacity - v.opacityTarget) > 0.002) {
@@ -319,7 +415,7 @@ export class AnatomyScene {
   private hoverCount = 0;
 
   private syncOutline(v: UnitView) {
-    const want = v.mesh.visible && ((v.highlightTarget > 0 && this.selCount <= this.outlineBudget) || (v.hoverTarget > 0 && this.hoverCount <= this.outlineBudget));
+    const want = v.mesh.visible && !v.sliced && ((v.highlightTarget > 0 && this.selCount <= this.outlineBudget) || (v.hoverTarget > 0 && this.hoverCount <= this.outlineBudget));
     if (!want) {
       if (v.outline) v.outline.visible = false;
       return;
@@ -353,6 +449,53 @@ export class AnatomyScene {
     for (const m of meshes) if (!m.geometry.boundsTree) m.geometry.computeBoundsTree();
   }
 
+  /** Bounding-sphere ray prefilter; sliced meshes get their sphere stretched by the slab spread. */
+  private candidates(ray: THREE.Ray): THREE.Mesh[] {
+    const s = new THREE.Sphere();
+    const sl = this.sliceState();
+    const spread = sl ? ((sl.n - 1) / 2) * this.slice.uSliceGap.value : 0;
+    return this.pickables.filter((m) => {
+      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+      s.copy(m.geometry.boundingSphere!).applyMatrix4(m.matrixWorld);
+      if (spread && this.units.get(m.userData.fj as string)?.sliced) s.radius += spread;
+      return ray.intersectsSphere(s);
+    });
+  }
+
+  /**
+   * Raycast that understands the slice dissection: sliced meshes are tested once per slab with the
+   * ray shifted by that slab's offset, keeping only hits that fall inside the slab.
+   */
+  private intersect(cand: THREE.Mesh[]): THREE.Intersection[] {
+    const sl = this.sliceState();
+    if (!sl) return this.raycaster.intersectObjects(cand, false);
+    const sliced = cand.filter((m) => this.units.get(m.userData.fj as string)?.sliced);
+    const rest = cand.filter((m) => !this.units.get(m.userData.fj as string)?.sliced);
+    const out = rest.length ? this.raycaster.intersectObjects(rest, false) : [];
+    if (sliced.length) {
+      const ray = this.raycaster.ray;
+      const o0 = ray.origin.clone();
+      const prev = this.raycaster.firstHitOnly;
+      this.raycaster.firstHitOnly = false;
+      for (let k = 0; k < sl.n; k++) {
+        const off = (k - (sl.n - 1) / 2) * this.slice.uSliceGap.value;
+        ray.origin.copy(o0);
+        ray.origin.x -= off;
+        const lo = sl.y0 + k * sl.h;
+        const hi = lo + sl.h;
+        for (const h of this.raycaster.intersectObjects(sliced, false)) {
+          if (h.point.x < lo || h.point.x >= hi) continue;
+          h.point.x += off;
+          h.distance = h.point.distanceTo(o0);
+          out.push(h);
+        }
+      }
+      ray.origin.copy(o0);
+      this.raycaster.firstHitOnly = prev;
+    }
+    return out.sort((a, b) => a.distance - b.distance);
+  }
+
   /**
    * Pick at normalised device coordinates. Thin structures (nerves, small vessels) are hard to
    * hit with a single ray, so when the centre ray misses we sample a small ring of rays.
@@ -362,17 +505,10 @@ export class AnatomyScene {
     const tryRay = (x: number, y: number): PickHit | null => {
       this.raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
       // Bounding-sphere prefilter so BVHs are only built for candidate meshes.
-      const ray = this.raycaster.ray;
-      const s = new THREE.Sphere();
-      const cand: THREE.Mesh[] = [];
-      for (const m of this.pickables) {
-        if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
-        s.copy(m.geometry.boundingSphere!).applyMatrix4(m.matrixWorld);
-        if (ray.intersectsSphere(s)) cand.push(m);
-      }
+      const cand = this.candidates(this.raycaster.ray);
       if (!cand.length) return null;
       this.ensureBvh(cand);
-      const hits = this.raycaster.intersectObjects(cand, false);
+      const hits = this.intersect(cand);
       const h = hits[0];
       if (!h) return null;
       const fj = h.object.userData.fj as string;
@@ -396,20 +532,14 @@ export class AnatomyScene {
   pickAll(ndc: THREE.Vector2, camera: THREE.Camera, max = 8): PickHit[] {
     this.refreshPickables();
     this.raycaster.setFromCamera(ndc, camera);
-    const ray = this.raycaster.ray;
-    const s = new THREE.Sphere();
-    const cand = this.pickables.filter((m) => {
-      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
-      s.copy(m.geometry.boundingSphere!).applyMatrix4(m.matrixWorld);
-      return ray.intersectsSphere(s);
-    });
+    const cand = this.candidates(this.raycaster.ray);
     this.ensureBvh(cand);
     const prev = this.raycaster.firstHitOnly;
     this.raycaster.firstHitOnly = false;
     const out: PickHit[] = [];
     const seen = new Set<string>();
     for (const m of cand) {
-      const h = this.raycaster.intersectObject(m, false)[0];
+      const h = this.intersect([m])[0];
       if (!h) continue;
       const fj = m.userData.fj as string;
       const sid = this.units.get(fj)!.structureId;
@@ -425,14 +555,9 @@ export class AnatomyScene {
     this.refreshPickables();
     this.raycaster.set(origin, dir.clone().normalize());
     this.raycaster.far = maxDist;
-    const s = new THREE.Sphere();
-    const cand = this.pickables.filter((m) => {
-      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
-      s.copy(m.geometry.boundingSphere!).applyMatrix4(m.matrixWorld);
-      return this.raycaster.ray.intersectsSphere(s);
-    });
+    const cand = this.candidates(this.raycaster.ray);
     this.ensureBvh(cand);
-    const h = this.raycaster.intersectObjects(cand, false)[0];
+    const h = this.intersect(cand)[0];
     this.raycaster.far = Infinity;
     if (!h) return null;
     const fj = h.object.userData.fj as string;

@@ -6,6 +6,7 @@ import { Registry, mapSelection } from '../src/data/registry';
 import type { ManifestFile, RegistryFile } from '../src/data/types';
 import { CameraRig } from '../src/engine/cameraRig';
 import { JOURNEYS, findNode, resolveJourney, sampleJourney } from '../src/guided/journeys';
+import { TOPICS, resolveName, studyFor, topicFor } from '../src/learn';
 
 const load = (m: 'male' | 'female') =>
   new Registry(
@@ -22,7 +23,9 @@ describe('registry', () => {
       expect(reg.get(sid)?.units).toContain(fj);
       expect(reg.manifest.units[fj]).toBeDefined();
     }
-    expect(reg.unitStructure.size).toBe(2234);
+    // 2,234 BodyParts3D element meshes + Z-Anatomy peripheral nerve meshes
+    expect(reg.unitStructure.size).toBeGreaterThan(2234 + 200);
+    expect([...reg.unitStructure.keys()].filter((u) => !u.startsWith('Z_')).length).toBe(2234);
   });
   it('hierarchy is a consistent tree rooted at systems', () => {
     for (const s of reg.structures.values()) {
@@ -146,5 +149,58 @@ describe('camera rig', () => {
     expect(rig.camera.position.distanceTo(p0)).toBeLessThan(0.05);
     for (let i = 0; i < 400; i++) rig.update(1 / 60);
     expect(rig.pose.target[0]).toBeCloseTo(-0.4, 3);
+  });
+});
+
+describe('peripheral nervous system', () => {
+  for (const [m, r] of [['male', reg], ['female', fem]] as const) {
+    it(`${m}: major nerves and plexuses are modelled and selectable`, () => {
+      for (const n of ['Brachial plexus', 'Lumbar plexus', 'Sacral plexus', 'Sciatic nerve', 'Median nerve', 'Ulnar nerve', 'Radial nerve', 'Femoral nerve', 'Vagus nerve (CN X)', 'Sympathetic trunk', 'Intercostal nerves', 'Cauda equina', 'Phrenic nerve', 'Ganglia of sympathetic trunk']) {
+        const rec = resolveName(r, n);
+        expect(rec, `${m}: ${n}`).toBeDefined();
+        expect(r.unitsUnder(rec!.id).length).toBeGreaterThan(0);
+      }
+      const pns = r.get('grp:nervous/peripheral-nervous-system')!;
+      expect(pns.parent).toBe('sys:nervous');
+      expect(r.unitsUnder(pns.id).length).toBeGreaterThan(200);
+    });
+  }
+});
+
+describe('learning content', () => {
+  it('every topic follows the standard section order and has a self-test and references', () => {
+    const order = ['overview', 'structure', 'function', 'clinical', 'key'];
+    for (const t of TOPICS) {
+      expect(t.sections.map((s) => s.id), t.id).toEqual(order);
+      expect(t.quiz.length, t.id).toBeGreaterThan(0);
+      expect(t.refs.length, t.id).toBeGreaterThan(0);
+      if (t.parent) expect(TOPICS.some((p) => p.id === t.parent), t.id).toBe(true);
+    }
+  });
+  it('topic focus nodes and [[links]] resolve in at least one body model', () => {
+    const texts: string[] = [];
+    for (const t of TOPICS) {
+      expect(resolveName(reg, t.focus.male) ?? resolveName(fem, t.focus.female), `${t.id} focus`).toBeDefined();
+      const walk = (x: unknown): void => (typeof x === 'string' ? void texts.push(x) : Array.isArray(x) ? x.forEach(walk) : x && typeof x === 'object' ? Object.values(x).forEach(walk) : undefined);
+      walk(t.sections);
+    }
+    const links = new Set([...texts.join('\n').matchAll(/\[\[([^\]|]+)/g)].map((m) => m[1]!));
+    const missing = [...links].filter((l) => !resolveName(reg, l) && !resolveName(fem, l));
+    expect(missing).toEqual([]);
+  });
+  it('every node in both models gets a study card and a topic page', () => {
+    for (const r of [reg, fem]) {
+      for (const rec of r.structures.values()) {
+        const s = studyFor(r, rec);
+        expect(s.what.length).toBeGreaterThan(5);
+        expect(topicFor(r, rec)).toBeDefined();
+      }
+    }
+  });
+  it('nerves map to the nervous-system guides', () => {
+    expect(topicFor(reg, resolveName(reg, 'Right median nerve'))!.id).toBe('peripheral-nerves');
+    expect(topicFor(reg, resolveName(reg, 'Right facial nerve (CN VII)'))!.id).toBe('cranial-nerves');
+    expect(studyFor(reg, resolveName(reg, 'Right sciatic nerve')!).source).toBe('curated');
+    expect(topicFor(fem, resolveName(fem, 'Uterus'))!.id).toBe('reproductive');
   });
 });

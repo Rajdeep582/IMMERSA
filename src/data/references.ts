@@ -1,12 +1,24 @@
 import type { Reference } from './types';
 
-/** Primary sources. Curated text cites OpenStax by section number; structure identity comes from FMA via BodyParts3D. */
+/** Primary sources. Learning content cites OpenStax by section title; structure identity comes from FMA via BodyParts3D. */
 const OPENSTAX_BOOK = 'https://openstax.org/details/books/anatomy-and-physiology-2e';
 
+/** OpenStax citation by section title (section numbers differ between 2e printings, so only the title is shown). */
 export const os = (section: string): Reference => ({
-  label: `OpenStax Anatomy & Physiology 2e, §${section}`,
+  label: `OpenStax Anatomy & Physiology 2e — ${section.replace(/^\d+\.\d+\s+/, '')}`,
   url: OPENSTAX_BOOK,
 });
+
+/** StatPearls (NCBI Bookshelf, peer-reviewed clinical review articles), linked as a Bookshelf search. */
+export const sp = (topic: string): Reference => ({
+  label: `StatPearls — ${topic}`,
+  url: `https://www.ncbi.nlm.nih.gov/books/?term=${encodeURIComponent('StatPearls ' + topic)}`,
+});
+
+export const ZANATOMY: Reference = {
+  label: 'Z-Anatomy, the libre 3D atlas of anatomy (peripheral nerves), CC BY-SA 4.0',
+  url: 'https://github.com/Z-Anatomy/Models-of-human-anatomy',
+};
 
 export const fmaRef = (fmaId: string): Reference => ({
   label: `Foundational Model of Anatomy ${fmaId.replace('FMA', 'FMA:')}`,
@@ -50,6 +62,15 @@ export const SOURCES = [
   },
   {
     model: 'both',
+    name: 'Z-Anatomy (Startup.blend, peripheral nervous system collection)',
+    by: 'Lluís Vinent / Z-Anatomy, built on BodyParts3D',
+    license: 'CC BY-SA 4.0 — the derived nerve meshes (models/*/nervous.glb nerve nodes and the peripheral-nervous-system hi chunks) are shared under the same licence',
+    use: '~250 peripheral nerve paths: cranial nerves, brachial and lumbosacral plexuses with their named branches, intercostal nerves, sympathetic trunk, spinal roots and cauda equina. Curves converted to tube meshes, registered to the male skeleton (thin-plate spline on 64 bone landmarks) and warped to the female body (spline on ~500 shared organ, vertebra, pelvis, limb-bone and skin landmarks), then thickened by 0.5 mm toward real nerve calibre.',
+    attribution: '"Z-Anatomy — The libre 3D atlas of anatomy — CC BY-SA 4.0" (models derived from "BodyParts3D, DBCLS")',
+    url: 'https://github.com/Z-Anatomy/Models-of-human-anatomy',
+  },
+  {
+    model: 'both',
     name: 'Foundational Model of Anatomy (FMA)',
     by: 'University of Washington Structural Informatics Group',
     license: 'CC BY 3.0',
@@ -62,8 +83,17 @@ export const SOURCES = [
     name: 'OpenStax Anatomy and Physiology 2e',
     by: 'OpenStax, Rice University',
     license: 'CC BY 4.0',
-    use: 'Basis for curated educational summaries (cited per entry by section).',
+    use: 'Primary basis for the learning pages and structure study cards (cited per entry by section title).',
     attribution: 'Access for free at openstax.org',
     url: OPENSTAX_BOOK,
+  },
+  {
+    model: 'both',
+    name: 'StatPearls (NCBI Bookshelf)',
+    by: 'StatPearls Publishing, peer-reviewed',
+    license: 'CC BY-NC-ND 4.0 (cited, not copied)',
+    use: 'Cross-check for clinical-significance points; linked per topic.',
+    attribution: 'Linked as NCBI Bookshelf searches.',
+    url: 'https://www.ncbi.nlm.nih.gov/books/?term=StatPearls',
   },
 ];

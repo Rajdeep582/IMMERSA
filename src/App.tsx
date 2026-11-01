@@ -1,4 +1,4 @@
-import { BookOpen, Layers, ListTree, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { BookOpen, GraduationCap, Layers, ListTree, X, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { loadRegistry, mapSelection, type Registry } from './data/registry';
 import type { BodyModel } from './data/types';
@@ -18,23 +18,16 @@ import { HintToast, HoverLabel, LoadingVeil, SelectionPin, StatsOverlay } from '
 import { Search } from './ui/Search';
 import { SourcesPanel } from './ui/SourcesPanel';
 import { Toolbar } from './ui/Toolbar';
-
-function useIsMobile() {
-  const q = '(max-width: 760px)';
-  const [m, setM] = useState(() => matchMedia(q).matches);
-  useEffect(() => {
-    const mq = matchMedia(q);
-    const on = () => setM(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
-  return m;
-}
+import { SliceControl } from './ui/SliceControl';
+import { useLayout } from './ui/layout';
+import { LearnPage } from './learn/LearnPage';
+import { getRoute, openLearn, useRoute } from './learn/route';
 
 function useKeyboard() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
+      if (getRoute().view === 'learn') return;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const st = useApp.getState();
@@ -120,7 +113,8 @@ export function App() {
   const [sheet, setSheet] = useState<'none' | 'left' | 'info'>('none');
   const quality = useMemo(() => detectQuality(), []);
   const hasGL = useMemo(() => webgl2Available(), []);
-  const mobile = useIsMobile();
+  const layout = useLayout();
+  const mobile = layout.kind === 'phone';
   const leftOpen = useApp((s) => s.leftOpen);
   const rightOpen = useApp((s) => s.rightOpen);
   const setLeftOpen = useApp((s) => s.setLeftOpen);
@@ -128,19 +122,58 @@ export function App() {
   const guided = useApp((s) => s.guided);
   const selectedId = useApp((s) => s.selectedId);
   const immersive = useApp((s) => s.immersive);
+  const sliceOpen = useApp((s) => s.sliceOpen);
+  const route = useRoute();
+  const learning = route.view === 'learn';
   useKeyboard();
 
   useEffect(() => {
     useApp.getState().setTier(quality.tier);
-    if (mobile) {
-      setLeftOpen(false);
-      setRightOpen(false);
-    }
     loadRegistry(useApp.getState().bodyModel)
       .then(setRegistry)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Layout transitions: phones use sheets; tablets start with drawers closed; desktop docks both.
+  // Desktop and tablet open the isolated 3D view in the study panel by default (phones opt in).
+  useEffect(() => {
+    if (layout.kind !== 'phone') useApp.getState().setInspectorOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    useApp.getState().setLayout(layout.kind);
+    if (layout.kind === 'phone') {
+      setLeftOpen(false);
+      setRightOpen(false);
+    } else {
+      setSheet('none');
+      if (layout.kind === 'tablet') {
+        setLeftOpen(false);
+        setRightOpen(false);
+      } else {
+        setLeftOpen(true);
+        setRightOpen(true);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout.kind]);
+
+  // Tablet drawers are mutually exclusive so the model always keeps most of the screen.
+  useEffect(
+    () =>
+      useApp.subscribe((s, p) => {
+        if (s.layout !== 'tablet') return;
+        if (s.leftOpen && !p.leftOpen && s.rightOpen) s.setRightOpen(false);
+        else if (s.rightOpen && !p.rightOpen && s.leftOpen) s.setLeftOpen(false);
+        if (s.guided && !p.guided && (s.leftOpen || s.rightOpen)) {
+          s.setLeftOpen(false);
+          s.setRightOpen(false);
+        }
+      }),
+    [],
+  );
 
   const [switching, setSwitching] = useState<BodyModel | null>(null);
   const switchModel = (m: BodyModel) => {
@@ -204,7 +237,23 @@ export function App() {
     );
 
   return (
-    <div className={`app ${mobile ? 'mobile' : ''} ${leftOpen && !mobile ? 'l-open' : ''} ${rightOpen && !mobile ? 'r-open' : ''} ${immersive ? 'immersive' : ''}`}>
+    <div
+      className={[
+        'app',
+        `layout-${layout.kind}`,
+        mobile ? 'mobile' : '',
+        mobile && layout.landscape ? 'landscape' : '',
+        layout.touch ? 'touch' : '',
+        leftOpen && !mobile ? 'l-open' : '',
+        rightOpen && !mobile && !guided ? 'r-open' : '',
+        guided && !mobile ? 'g-open' : '',
+        immersive ? 'immersive' : '',
+        mobile && sheet !== 'none' ? 'sheet-open' : '',
+        learning ? 'learning' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {registry && <MainViewport registry={registry} quality={quality} />}
       {registry && <HoverLabel registry={registry} />}
       {registry && <SelectionPin key={registry.model} registry={registry} />}
@@ -218,6 +267,9 @@ export function App() {
         </div>
         {registry && <BodyToggle value={registry.model} pending={switching} onChange={switchModel} />}
         {registry && !mobile && <Search registry={registry} />}
+        <button className="learn-btn" onClick={() => openLearn(null)} title="Study guides: structured notes for every system">
+          <GraduationCap size={16} /> <span>Learn</span>
+        </button>
       </header>
 
       {registry && !mobile && (
@@ -244,6 +296,11 @@ export function App() {
       {registry && (mobile || !rightOpen || guided) && !immersive && <Breadcrumbs registry={registry} variant="float" />}
       {registry && <ImmersiveBar registry={registry} />}
       {registry && <Toolbar onGuided={toggleGuided} />}
+      {registry && sliceOpen && !guided && !immersive && (
+        <div className="slice-dock">
+          <SliceControl registry={registry} variant="dock" onClose={() => useApp.getState().setSliceOpen(false)} />
+        </div>
+      )}
       {picker && !guided && (
         <JourneyPicker
           model={registry?.model ?? 'male'}
@@ -266,10 +323,24 @@ export function App() {
             <button className={sheet === 'info' ? 'on' : ''} onClick={() => setSheet(sheet === 'info' ? 'none' : 'info')} disabled={!selectedId}>
               <BookOpen size={16} /> Details
             </button>
+            <button onClick={() => openLearn(null)}>
+              <GraduationCap size={16} /> Learn
+            </button>
           </nav>
           {sheet !== 'none' && (
             <div className="sheet" role="dialog" aria-label={sheet === 'left' ? 'Layers and search' : 'Structure details'}>
               <div className="sheet-grip" onClick={() => setSheet('none')} aria-hidden />
+              <div className="sheet-head" role="tablist">
+                <button role="tab" aria-selected={sheet === 'left'} className={sheet === 'left' ? 'on' : ''} onClick={() => setSheet('left')}>
+                  <Layers size={15} /> Browse
+                </button>
+                <button role="tab" aria-selected={sheet === 'info'} className={sheet === 'info' ? 'on' : ''} onClick={() => setSheet('info')} disabled={!selectedId}>
+                  <BookOpen size={15} /> Details
+                </button>
+                <button className="icon-btn sm ghost sheet-close" onClick={() => setSheet('none')} aria-label="Close panel">
+                  <X size={16} />
+                </button>
+              </div>
               {sheet === 'left' ? (
                 <>
                   <Search registry={registry} onPicked={() => setSheet('info')} />
@@ -277,7 +348,7 @@ export function App() {
                 </>
               ) : (
                 <div className="panel-scroll">
-                  <InspectorPanel registry={registry} quality={quality} onClose={() => setSheet('none')} />
+                  <InspectorPanel registry={registry} quality={quality} />
                 </div>
               )}
             </div>
@@ -287,6 +358,16 @@ export function App() {
 
       <HintToast />
       <StatsOverlay />
+      {learning && (
+        <LearnPage
+          topicId={route.view === 'learn' ? route.topic : null}
+          section={route.view === 'learn' ? route.section : undefined}
+          registry={registry}
+          quality={quality}
+          switching={switching}
+          onSwitchModel={switchModel}
+        />
+      )}
     </div>
   );
 }

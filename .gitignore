@@ -23,3 +23,5 @@ Thumbs.db
 .idea/
 
 *.tsbuildinfo
+
+_to_delete/

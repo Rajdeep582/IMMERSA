@@ -62,6 +62,21 @@ class ViewerApi {
     this.invalidate();
   }
 
+  /** Frame the slice dissection once separated; `elevate` turns to a front-oblique view so the cut faces show. */
+  frameSlices(elevate = false) {
+    const rig = this.rig;
+    const b = this.scene?.slicedBounds();
+    if (!rig || !b || b.isEmpty()) return;
+    const pose = poseForBox([b.min.toArray(), b.max.toArray()] as [[number, number, number], [number, number, number]], rig.pose, rig.camera, {
+      margin: 1.35,
+      outward: false,
+      // Vertical slabs separate along x: view from the front, slightly turned so the cut faces show.
+      theta: elevate ? 0.42 : undefined,
+      phi: elevate ? Math.PI * 0.44 : undefined,
+    });
+    this.flyTo(pose, { arc: false });
+  }
+
   /** Smoothly frame a registry node, revealing its system if hidden. */
   focus(id: string, opts: { margin?: number; theta?: number; phi?: number } = {}): CameraPose | undefined {
     const reg = this.registry;
@@ -111,6 +126,8 @@ class ViewerApi {
   selectAndFocus(id: string) {
     const st = useApp.getState();
     st.select(id);
+    // Show details beside the model on tablet/desktop (phones open the details sheet instead).
+    if (st.layout !== 'phone' && !st.rightOpen && !st.immersive && !st.guided) st.setRightOpen(true);
     const pose = this.focus(id);
     if (!pose) return;
     window.setTimeout(() => {
