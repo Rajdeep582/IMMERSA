@@ -7,6 +7,7 @@ import type { ManifestFile, RegistryFile } from '../src/data/types';
 import { CameraRig } from '../src/engine/cameraRig';
 import { JOURNEYS, findNode, resolveJourney, sampleJourney } from '../src/guided/journeys';
 import { TOPICS, resolveName, studyFor, topicFor } from '../src/learn';
+import { splitMesh } from '../src/engine/sliceWorker';
 
 const load = (m: 'male' | 'female') =>
   new Registry(
@@ -202,5 +203,37 @@ describe('learning content', () => {
     expect(topicFor(reg, resolveName(reg, 'Right facial nerve (CN VII)'))!.id).toBe('cranial-nerves');
     expect(studyFor(reg, resolveName(reg, 'Right sciatic nerve')!).source).toBe('curated');
     expect(topicFor(fem, resolveName(fem, 'Uterus'))!.id).toBe('reproductive');
+  });
+});
+
+describe('slice dissection cutting', () => {
+  it('cuts every triangle into exactly one slab, keeps area, and tags vertices with their slab', () => {
+    // Unit sphere-ish: an icosahedron scaled, cut by 5 vertical slabs along x.
+    const t = (1 + Math.sqrt(5)) / 2;
+    const v = [-1, t, 0, 1, t, 0, -1, -t, 0, 1, -t, 0, 0, -1, t, 0, 1, t, 0, -1, -t, 0, 1, -t, t, 0, -1, t, 0, 1, -t, 0, -1, -t, 0, 1];
+    const f = [0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11, 1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8, 3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9, 4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1];
+    const pos = new Float32Array(v);
+    const n = 5, y0 = -t, h = (2 * t) / n;
+    const r = splitMesh({ id: 1, pos, posNorm: false, posSize: 3, nrm: pos.slice(), nrmNorm: false, idx: new Uint32Array(f), row: [1, 0, 0, 0], y0, h, n });
+    const area = (P: Float32Array, I: ArrayLike<number>) => {
+      let a = 0;
+      for (let i = 0; i < I.length; i += 3) {
+        const [p, q, w] = [I[i]!, I[i + 1]!, I[i + 2]!].map((k) => new THREE.Vector3(P[k * 3], P[k * 3 + 1], P[k * 3 + 2]));
+        a += q!.clone().sub(p!).cross(w!.clone().sub(p!)).length() / 2;
+      }
+      return a;
+    };
+    expect(Math.abs(area(r.pos, r.idx) - area(pos, f))).toBeLessThan(1e-4);
+    for (let i = 0; i < r.idx.length; i += 3) {
+      const ks = [r.slab[r.idx[i]!], r.slab[r.idx[i + 1]!], r.slab[r.idx[i + 2]!]];
+      expect(new Set(ks).size).toBe(1);
+      const k = ks[0]!;
+      for (let j = 0; j < 3; j++) {
+        const x = r.pos[r.idx[i + j]! * 3]!;
+        expect(x).toBeGreaterThanOrEqual(y0 + k * h - 1e-5);
+        expect(x).toBeLessThanOrEqual(y0 + (k + 1) * h + 1e-5);
+      }
+    }
+    expect(r.idx.length).toBeGreaterThan(f.length);
   });
 });

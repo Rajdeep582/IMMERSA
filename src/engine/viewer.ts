@@ -74,6 +74,8 @@ class ViewerApi {
       theta: elevate ? 0.42 : undefined,
       phi: elevate ? Math.PI * 0.44 : undefined,
     });
+    // Widely separated slabs can need more distance than the normal zoom-out limit.
+    rig.maxRadius = Math.max(7, pose.radius * 1.25);
     this.flyTo(pose, { arc: false });
   }
 

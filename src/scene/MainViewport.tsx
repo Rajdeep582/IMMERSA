@@ -213,6 +213,14 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
   }, [anat, camera, gl, invalidate, quality, registry, scene, library]);
 
   // --- push app state into the scene ---
+  // Worker-cut slabs arrive asynchronously; redraw when they do.
+  useEffect(() => {
+    anat.onAsync = invalidate;
+    return () => {
+      anat.onAsync = null;
+    };
+  }, [anat, invalidate]);
+
   useEffect(() => {
     anat.applyState(viewStateOf(useApp.getState()));
     invalidate();
@@ -250,6 +258,9 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
           if (useApp.getState().bodyModel !== registry.model) return;
           anat.addUnits(sys, units);
           useApp.getState().setSystemStatus(sys, 'ready');
+          // Compile new shader programs in parallel (KHR_parallel_shader_compile) and warm picking BVHs in idle time.
+          gl.compileAsync(scene, camera).then(() => invalidate()).catch(() => undefined);
+          anat.warmBvh();
           if (!arrived) {
             arrived = true;
             if (!viewer.resumedFromSwitch) rigRef.current?.flyTo(HOME_POSE, { duration: 2.1, arc: false });
@@ -408,7 +419,7 @@ export function MainViewport({ registry, quality }: { registry: Registry; qualit
       <Canvas
         frameloop="demand"
         dpr={quality.maxDpr}
-        gl={{ antialias: quality.antialias, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: false }}
+        gl={{ antialias: quality.antialias, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: false, stencil: false, depth: true, failIfMajorPerformanceCaveat: false }}
         camera={{ fov: 30, near: 0.01, far: 20, position: [0, 0, 3] }}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);

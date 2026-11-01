@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { workerCount } from './threads';
 import type { BodyModel, SystemId } from '../data/types';
 
 /** One BodyParts3D element mesh as delivered in a glTF file (geometry + its dequantisation transform). */
@@ -13,6 +14,8 @@ export interface LoadedUnit {
 }
 
 const loader = new GLTFLoader();
+// Decompress meshes on worker threads (one per spare core, up to 4) instead of the main thread.
+MeshoptDecoder.useWorkers(workerCount(4));
 loader.setMeshoptDecoder(MeshoptDecoder);
 
 async function fetchWithProgress(url: string, signal: AbortSignal | undefined, onProgress?: (f: number) => void): Promise<ArrayBuffer> {

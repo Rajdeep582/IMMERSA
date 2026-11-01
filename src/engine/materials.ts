@@ -169,10 +169,14 @@ uniform float uSliceH;
 uniform float uSliceN;
 uniform float uSliceGap;
 uniform float uSliceOn;
+uniform float uSliceSplit;
 varying float vSliceY;
 varying float vSliceOff;
 float sliceOffset(float y) {
   float k = clamp(floor((y - uSliceY0) / uSliceH), 0.0, uSliceN - 1.0);
+  return (k - (uSliceN - 1.0) * 0.5) * uSliceGap;
+}
+float slabOffset(float k) {
   return (k - (uSliceN - 1.0) * 0.5) * uSliceGap;
 }
 `;
@@ -181,21 +185,22 @@ float sliceOffset(float y) {
  * Vertical (sagittal) slice dissection in the shader: each vertex moves left/right by the offset
  * of the vertical slab it lies in, so the mesh separates into slabs without duplicating geometry.
  * Triangles that straddle a slab boundary get stretched across the gap; their fragments are
- * discarded (a fragment is kept only where its interpolated offset matches the slab of its
- * original x position), which leaves clean open cuts. Back faces seen through a cut are darkened so
- * the hollow interior reads as a cut surface.
+ * discarded until the worker-cut geometry (exact cuts, see sliceWorker.ts) arrives. Back faces
+ * seen through a cut are painted a flat tissue colour so each slab reads as a solid section.
  */
 function applySlice(m: THREE.MeshStandardMaterial, slice: SliceUniforms) {
   const on = { value: 0 };
+  const splitOn = { value: 0 };
   m.userData.sliceOn = on;
+  m.userData.sliceSplit = splitOn;
   const prev = m.onBeforeCompile;
   const prevKey = m.customProgramCacheKey;
-  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|slice-v1';
+  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|slice-v2';
   m.onBeforeCompile = (shader, renderer) => {
     prev.call(m, shader, renderer);
-    Object.assign(shader.uniforms, slice, { uSliceOn: on });
+    Object.assign(shader.uniforms, slice, { uSliceOn: on, uSliceSplit: splitOn });
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\n' + SLICE_DECL)
+      .replace('#include <common>', '#include <common>\nattribute float aSlab;\n' + SLICE_DECL)
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -204,7 +209,8 @@ function applySlice(m: THREE.MeshStandardMaterial, slice: SliceUniforms) {
           vec4 swp = modelMatrix * vec4(transformed, 1.0);
           vSliceY = swp.x;
           if (uSliceOn > 0.5 && uSliceGap > 0.0) {
-            sliceOffW = sliceOffset(swp.x);
+            // Pre-cut geometry carries an exact slab index per vertex; otherwise derive it from x.
+            sliceOffW = uSliceSplit > 0.5 ? slabOffset(aSlab) : sliceOffset(swp.x);
             transformed += inverse(mat3(modelMatrix)) * vec3(sliceOffW, 0.0, 0.0);
           }
           vSliceOff = sliceOffW;
@@ -215,12 +221,19 @@ function applySlice(m: THREE.MeshStandardMaterial, slice: SliceUniforms) {
       .replace(
         '#include <clipping_planes_fragment>',
         `#include <clipping_planes_fragment>
-        if (uSliceOn > 0.5 && uSliceGap > 0.0 && abs(vSliceOff - sliceOffset(vSliceY)) > uSliceGap * 0.04) discard;`,
+        if (uSliceOn > 0.5 && uSliceSplit < 0.5 && uSliceGap > 0.0 && abs(vSliceOff - sliceOffset(vSliceY)) > uSliceGap * 0.04) discard;`,
       )
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
-        if (uSliceOn > 0.5 && uSliceGap > 0.0 && !gl_FrontFacing) diffuseColor.rgb *= 0.5;`,
+        vec3 sliceCap = diffuseColor.rgb * 0.68;`,
+      )
+      .replace(
+        '#include <opaque_fragment>',
+        // Looking into a cut shows the inner (back) faces of the far wall; painting them a flat tissue
+        // colour makes each slab read as a solid section with a clean cut face.
+        `#include <opaque_fragment>
+        if (uSliceOn > 0.5 && uSliceGap > 0.0 && !gl_FrontFacing) gl_FragColor.rgb = sliceCap;`,
       );
   };
 }

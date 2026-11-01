@@ -6,6 +6,7 @@ import type { SystemId } from '../data/types';
 import type { AppState } from '../state/store';
 import { ACCENT, HOVER, createOutlineMaterial, createSliceUniforms, createUnitMaterial, setDetailAxis } from './materials';
 import type { LoadedUnit } from './models';
+import { sliceSplitter } from './sliceSplitter';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -36,6 +37,11 @@ interface UnitView {
   offset: THREE.Vector3;
   /** Part of the current vertical slice dissection. */
   sliced: boolean;
+  /** Geometry the unit shows when not dissected (body-view or full-resolution). */
+  baseGeom: THREE.BufferGeometry;
+  /** Worker-cut copy of baseGeom for one slab layout. */
+  split: { geom: THREE.BufferGeometry; key: string } | null;
+  splitPending: string | null;
 }
 
 export interface PickHit {
@@ -82,6 +88,9 @@ export class AnatomyScene {
   readonly slice = createSliceUniforms();
   private sliceInfo: SliceInfo | null = null;
   private sliceKey = '';
+  private layoutKey = '';
+  /** Called when asynchronous work (worker-cut slabs) changes what should be drawn. */
+  onAsync: (() => void) | null = null;
 
   constructor(
     private registry: Registry,
@@ -140,6 +149,9 @@ export class AnatomyScene {
         offsetTarget: new THREE.Vector3(),
         offset: new THREE.Vector3(),
         sliced: false,
+        baseGeom: u.geometry,
+        split: null,
+        splitPending: null,
       };
       this.units.set(u.fj, view);
       this.root.add(mesh);
@@ -162,12 +174,14 @@ export class AnatomyScene {
     const v = this.units.get(fj);
     if (!v) return;
     if (geom && transform) {
+      v.baseGeom = geom;
       v.mesh.geometry = geom;
       v.mesh.scale.copy(transform.scale);
       v.basePosition.copy(transform.position);
       v.mesh.quaternion.copy(transform.quaternion);
       this.hiActive.set(fj, geom);
     } else {
+      v.baseGeom = v.loGeometry;
       v.mesh.geometry = v.loGeometry;
       v.mesh.scale.copy(v.loTransform.scale);
       v.mesh.quaternion.copy(v.loTransform.quaternion);
@@ -177,6 +191,13 @@ export class AnatomyScene {
     v.mesh.position.copy(v.basePosition).add(v.offset);
     if (v.outline) v.outline.geometry = v.mesh.geometry;
     this.pickDirty = true;
+    // A geometry swap invalidates any cut copy.
+    if (v.split) {
+      v.split.geom.dispose();
+      v.split = null;
+    }
+    v.splitPending = null;
+    this.syncSliceFlag(v);
   }
 
   setWireframe(on: boolean) {
@@ -272,7 +293,13 @@ export class AnatomyScene {
       }
     }
     this.sliceKey = key;
-    if (this.sliceInfo && active) this.sliceInfo.gap = amount * Math.max(this.sliceInfo.h * 1.1, 0.008);
+    // Wide travel: at 100% neighbouring slabs sit four slab-widths apart (≥3 cm), growing linearly with the slider.
+    if (this.sliceInfo && active) this.sliceInfo.gap = amount * Math.max(this.sliceInfo.h * 4, 0.03);
+    const lk = this.sliceInfo ? `${this.sliceInfo.y0.toFixed(5)}|${this.sliceInfo.h.toFixed(6)}|${this.sliceInfo.n}` : '';
+    if (lk !== this.layoutKey) {
+      this.layoutKey = lk;
+      sliceSplitter.clearQueue();
+    }
     if (this.sliceInfo) {
       this.slice.uSliceY0.value = this.sliceInfo.y0;
       this.slice.uSliceH.value = this.sliceInfo.h;
@@ -287,6 +314,52 @@ export class AnatomyScene {
     if (u) u.value = on ? 1 : 0;
     const side = on ? THREE.DoubleSide : ((v.material.userData.baseSide as THREE.Side | undefined) ?? THREE.FrontSide);
     if (v.material.side !== side) v.material.side = side;
+    // Displaced slabs leave the original bounds; skip frustum culling while dissected.
+    v.mesh.frustumCulled = !on;
+    if (on && this.sliceInfo!.gap > 0) this.requestSplit(v);
+    else this.showGeometry(v, false);
+  }
+
+  private showGeometry(v: UnitView, split: boolean) {
+    const g = split && v.split ? v.split.geom : v.baseGeom;
+    if (v.mesh.geometry !== g) {
+      v.mesh.geometry = g;
+      if (v.outline) v.outline.geometry = g;
+      this.pickDirty = true;
+    }
+    const f = v.material.userData.sliceSplit as { value: number } | undefined;
+    if (f) f.value = split && v.split ? 1 : 0;
+  }
+
+  /** Use (or start) an exact worker cut of this unit for the current slab layout. */
+  private requestSplit(v: UnitView) {
+    const key = this.layoutKey;
+    if (v.split?.key === key) return this.showGeometry(v, true);
+    if (v.split) {
+      v.split.geom.dispose();
+      v.split = null;
+    }
+    this.showGeometry(v, false);
+    if (v.splitPending === key || !v.mesh.visible && v.opacityTarget <= 0) return;
+    const s = this.sliceInfo!;
+    v.splitPending = key;
+    v.mesh.updateMatrixWorld();
+    const base = v.baseGeom;
+    sliceSplitter
+      .split(base, v.mesh.matrixWorld, { y0: s.y0, h: s.h, n: s.n })
+      .then((g) => {
+        if (v.splitPending !== key || this.layoutKey !== key || v.baseGeom !== base || !this.units.has(v.fj)) {
+          g.dispose();
+          return;
+        }
+        v.splitPending = null;
+        v.split = { geom: g, key };
+        if (v.sliced && this.sliceInfo) this.showGeometry(v, true);
+        this.onAsync?.();
+      })
+      .catch(() => {
+        if (v.splitPending === key) v.splitPending = null;
+      });
   }
 
   /** Slab layout of the current dissection (null when not slicing). */
@@ -445,6 +518,30 @@ export class AnatomyScene {
     this.pickDirty = false;
   }
 
+  private bvhQueue: THREE.Mesh[] = [];
+  private bvhScheduled = false;
+  /**
+   * Build picking BVHs in idle time (small time slices) so the first tap on a phone does not stall
+   * while acceleration structures for hundreds of meshes are built at once.
+   */
+  warmBvh() {
+    this.refreshPickables();
+    this.bvhQueue = this.pickables.filter((m) => !m.geometry.boundsTree);
+    if (this.bvhScheduled || !this.bvhQueue.length) return;
+    this.bvhScheduled = true;
+    const ric: (cb: (d: { timeRemaining(): number }) => void) => void =
+      (window as unknown as { requestIdleCallback?: typeof ric }).requestIdleCallback?.bind(window) ?? ((cb) => window.setTimeout(() => cb({ timeRemaining: () => 8 }), 16));
+    const step = (d: { timeRemaining(): number }) => {
+      while (this.bvhQueue.length && d.timeRemaining() > 3) {
+        const m = this.bvhQueue.pop()!;
+        if (!m.geometry.boundsTree) m.geometry.computeBoundsTree();
+      }
+      if (this.bvhQueue.length) ric(step);
+      else this.bvhScheduled = false;
+    };
+    ric(step);
+  }
+
   private ensureBvh(meshes: THREE.Mesh[]) {
     for (const m of meshes) if (!m.geometry.boundsTree) m.geometry.computeBoundsTree();
   }
@@ -584,7 +681,10 @@ export class AnatomyScene {
 
   dispose() {
     // Geometries are shared with the model library (and other viewports); only materials are owned here.
-    for (const v of this.units.values()) v.material.dispose();
+    for (const v of this.units.values()) {
+      v.material.dispose();
+      v.split?.geom.dispose();
+    }
     this.outlineSel.dispose();
     this.outlineHover.dispose();
     this.units.clear();
