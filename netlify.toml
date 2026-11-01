@@ -1,0 +1,8 @@
+# Only used if the site is deployed on Netlify (Vercel needs no config file).
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"

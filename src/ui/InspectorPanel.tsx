@@ -1,4 +1,5 @@
-import { Activity, Box, ChevronRight, Crosshair, Droplet, Eye, EyeOff, FlipHorizontal2, GraduationCap, Info, Layers2, Layers3, MapPin, Shrink, Star, Stethoscope, Target, X, Zap } from 'lucide-react';
+import { Activity, Box, ChevronRight, Crosshair, Droplet, Eye, EyeOff, FlipHorizontal2, GraduationCap, Info, Layers2, Layers3, MapPin, MessageCircleQuestion, Shrink, Star, Stethoscope, Target, X, Zap } from 'lucide-react';
+import { openMurphy } from '../murphy/open';
 import { useMemo } from 'react';
 import { BODYPARTS3D, HRA, fmaRef, ontRef } from '../data/references';
 import type { Registry } from '../data/registry';
@@ -268,6 +269,10 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
         <button className={`act ${isHidden ? 'on' : ''}`} onClick={() => toggleHidden(rec.id)} title="Hide to reveal deeper structures">
           {isHidden ? <EyeOff size={15} /> : <Eye size={15} />}
           <span>{isHidden ? 'Hidden' : 'Hide'}</span>
+        </button>
+        <button className="act murphy" onClick={() => openMurphy()} title="Ask Doctor Murphy about this structure">
+          <MessageCircleQuestion size={15} />
+          <span>Ask AI</span>
         </button>
         {info.counterpart && (
           <button className="act" onClick={() => viewer.selectAndFocus(info.counterpart!.id)} title={info.counterpart.name}>

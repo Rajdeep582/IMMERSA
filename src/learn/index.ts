@@ -171,3 +171,8 @@ export function studyFor(reg: Registry, rec: StructureRecord): Study {
     from: anc?.rec.name,
   };
 }
+
+/** Names that have written study cards (for matching structures mentioned in free text). */
+export const studyNames = (): string[] => Object.keys(STUDY);
+/** Written study card for a name, if any. */
+export const studyByName = (name: string): StudyEntry | undefined => curatedStudy(name);

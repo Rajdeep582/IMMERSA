@@ -25,6 +25,7 @@ import { LearnPage } from './learn/LearnPage';
 import { getRoute, navBack, openLearn, useCanGoBack, useRoute } from './learn/route';
 import { topicFor } from './learn';
 import { installNav } from './ui/nav';
+import { DoctorMurphy } from './murphy/DoctorMurphy';
 
 installNav();
 
@@ -384,6 +385,17 @@ export function App() {
         </>
       )}
 
+      <DoctorMurphy
+        placement={[
+          `layout-${layout.kind}`,
+          learning ? 'in-learn' : '',
+          rightOpen && !mobile && !guided && !learning ? 'r-open' : '',
+          (mobile && (sheet !== 'none' || guided)) || (immersive && !learning) ? 'tucked' : '',
+          mobile && layout.landscape ? 'landscape' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      />
       <HintToast />
       <StatsOverlay />
       {learning && (

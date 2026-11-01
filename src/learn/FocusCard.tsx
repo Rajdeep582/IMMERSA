@@ -1,4 +1,5 @@
-import { Activity, Box, Droplet, Layers3, MapPin, Star, Stethoscope, Zap } from 'lucide-react';
+import { Activity, Box, Droplet, Layers3, MapPin, MessageCircleQuestion, Star, Stethoscope, Zap } from 'lucide-react';
+import { openMurphy } from '../murphy/open';
 import { useMemo } from 'react';
 import type { Registry } from '../data/registry';
 import { SYSTEM_BY_ID } from '../data/systems';
@@ -106,6 +107,9 @@ export function FocusCard({ rec, registry, quality, onBack, onLink, topicId }: {
       <footer className="lfocus-foot">
         <button className="lbtn primary" onClick={onBack}>
           <Box size={15} /> Back to {rec.name} in 3D
+        </button>
+        <button className="lbtn" onClick={() => openMurphy()}>
+          <MessageCircleQuestion size={15} /> Ask Doctor Murphy
         </button>
         <span className="lfocus-note">{related ? 'The guide below explains the system this structure belongs to.' : 'Guide below is a related topic.'}</span>
       </footer>

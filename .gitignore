@@ -20,13 +20,14 @@ android/app/src/main/assets/capacitor.config.json
 android/app/src/main/assets/capacitor.plugins.json
 android/capacitor-cordova-android-plugins/build
 
+# Local secrets (Doctor Murphy key for npm run dev)
+.env
+.env.local
+.env.*.local
+
 # Build & temporary
 *.tsbuildinfo
 _to_delete/
-
-# Environment
-.env
-.env.local
 
 # Editor & OS
 .DS_Store

@@ -23,6 +23,10 @@ export function initAndroid() {
   // Hardware back: leave Learn pages → close slice dock → clear isolate/selection → background the app
   // (minimise, not exit, so loaded meshes survive a quick return).
   void App.addListener('backButton', () => {
+    // Open overlays (e.g. Doctor Murphy) close first.
+    const ev = new Event('immersa:back', { cancelable: true });
+    window.dispatchEvent(ev);
+    if (ev.defaultPrevented) return;
     const s = useApp.getState();
     if (getRoute().view === 'learn') {
       navBack();
