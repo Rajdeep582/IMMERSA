@@ -4,15 +4,26 @@ import { SYSTEM_BY_ID } from '../data/systems';
 import type { StructureRecord, SystemId } from '../data/types';
 import { NERVE_STUDY } from './studyNerves';
 import { ORGAN_STUDY } from './studyOrgans';
+import { EXTRA_STUDY, PATTERN_STUDY } from './studyExtra';
 import { CARDIORESP_TOPICS } from './topics/cardiorespiratory';
 import { MSK_TOPICS } from './topics/musculoskeletal';
 import { NERVOUS_TOPICS } from './topics/nervous';
 import { OTHER_TOPICS } from './topics/other';
 import { VISCERAL_TOPICS } from './topics/visceral';
+import { ENRICH, REGIONAL_TOPICS } from './topics/enrich';
 import type { StudyEntry, Topic } from './types';
 
 /** Learning pages, in reading order: each system followed by its sub-topics. */
-export const TOPICS: Topic[] = [...NERVOUS_TOPICS, ...MSK_TOPICS, ...CARDIORESP_TOPICS, ...VISCERAL_TOPICS, ...OTHER_TOPICS];
+/** Extra exam-oriented sections go after "Clinical significance", before "Key points". */
+function enrich(t: Topic): Topic {
+  const extra = ENRICH[t.id];
+  if (!extra?.length) return t;
+  const at = t.sections.findIndex((s) => s.id === 'key');
+  const sections = at < 0 ? [...t.sections, ...extra] : [...t.sections.slice(0, at), ...extra, ...t.sections.slice(at)];
+  return { ...t, sections, minutes: t.minutes + Math.round(extra.length * 2.5) };
+}
+const MSK_WITH_REGIONS = [...MSK_TOPICS, ...REGIONAL_TOPICS];
+export const TOPICS: Topic[] = [...NERVOUS_TOPICS, ...MSK_WITH_REGIONS, ...CARDIORESP_TOPICS, ...VISCERAL_TOPICS, ...OTHER_TOPICS].map(enrich);
 export const TOPIC_BY_ID = new Map(TOPICS.map((t) => [t.id, t]));
 export const SYSTEM_TOPICS = TOPICS.filter((t) => !t.parent);
 export const childTopics = (id: string) => TOPICS.filter((t) => t.parent === id);
@@ -23,7 +34,7 @@ export function studyKey(name: string): string {
   return Registry.neutralKey(name).replace(/\s*\((?:cn )?[ivx]+\)$/, '').trim();
 }
 
-const STUDY: Record<string, StudyEntry> = { ...ORGAN_STUDY, ...NERVE_STUDY };
+const STUDY: Record<string, StudyEntry> = { ...EXTRA_STUDY, ...ORGAN_STUDY, ...NERVE_STUDY };
 
 // ---------- name resolution for [[links]] and topic focus ----------
 const nameIndex = new WeakMap<Registry, { exact: Map<string, StructureRecord>; neutral: Map<string, StructureRecord[]> }>();
@@ -84,6 +95,8 @@ export interface Study extends StudyEntry {
 function curatedStudy(name: string): StudyEntry | undefined {
   const s = STUDY[studyKey(name)];
   if (s) return s;
+  const pat = PATTERN_STUDY.find(([re]) => re.test(name));
+  if (pat) return pat[1];
   const c = curatedFor(name);
   if (!c) return undefined;
   return {

@@ -57,21 +57,47 @@ export function HintToast() {
 
 let everReady = false;
 
+declare global {
+  interface Window {
+    /** Anatomy intro screen (index.html): progress + dismissal. */
+    __intro?: { progress: (f: number, label?: string) => void; done: () => void } | null;
+  }
+}
+
+const STAGE: Partial<Record<string, string>> = {
+  integumentary: 'Shaping the body surface',
+  skeletal: 'Assembling the skeleton',
+  nervous: 'Wiring the nervous system',
+  digestive: 'Placing the organs',
+  respiratory: 'Inflating the lungs',
+  cardiovascular: 'Perfusing the vessels',
+  muscular: 'Layering the muscles',
+};
+
 export function LoadingVeil() {
   const status = useApp((s) => s.systemStatus);
-  // Full-screen veil only on the very first load; later model switches keep the scene interactive.
+  // Intro only on the very first load; later model switches keep the scene interactive.
   const first = status.skeletal === 'ready' || status.integumentary === 'ready' || everReady;
   if (first) everReady = true;
   const loading = Object.entries(status).filter(([, v]) => v === 'loading').map(([k]) => k);
   const hiRes = useApp((s) => s.hiResRegion);
+  useEffect(() => {
+    const intro = window.__intro;
+    if (!intro) return;
+    if (first) return intro.done();
+    const vals = Object.values(status);
+    const ready = vals.filter((v) => v === 'ready').length;
+    // Skin + skeleton gate the first view: weight the bar toward them.
+    const f = 0.12 + 0.8 * Math.min(1, (ready + 0.5 * loading.length) / 3);
+    intro.progress(f, loading.length ? (STAGE[loading[0]!] ?? 'Loading anatomy') : 'Loading anatomy data');
+  }, [first, status, loading.length]);
+  useEffect(() => {
+    // Never leave the intro up if something stalls.
+    const t = window.setTimeout(() => window.__intro?.done(), 30000);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <>
-      <div className={`veil ${first ? 'gone' : ''}`} aria-hidden={first}>
-        <div className="veil-inner">
-          <Loader2 className="spin" size={18} />
-          <span>Preparing anatomy…</span>
-        </div>
-      </div>
       {first && (loading.length > 0 || hiRes) && (
         <div className="lod-chip" role="status">
           {loading.length > 0 ? (

@@ -1,0 +1,11 @@
+// Gradle runs on JDK 21 whatever JDK launches it (Android Studio now bundles JDK 25, which Gradle 8.x
+// cannot run build scripts on). Missing JDK 21 is downloaded automatically — see gradle/gradle-daemon-jvm.properties.
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+include ':app'
+include ':capacitor-cordova-android-plugins'
+project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
+
+apply from: 'capacitor.settings.gradle'

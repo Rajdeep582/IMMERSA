@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, ArrowRight, BookMarked, Box, CheckCircle2, ChevronRight, Clock, GraduationCap, HelpCircle, Layers3, MapPin, Moon, RotateCcw, Search as SearchIcon, Star, Stethoscope, Sun, Type } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRight, BookMarked, Box, Brain, CheckCircle2, ChevronRight, Clock, Compass, Droplets, Flame, GitCompare, GraduationCap, HelpCircle, Layers3, Lightbulb, MapPin, Moon, RotateCcw, Search as SearchIcon, Star, Stethoscope, Sun, Type, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Registry } from '../data/registry';
 import { SYSTEM_BY_ID } from '../data/systems';
@@ -7,12 +7,31 @@ import type { QualityProfile } from '../engine/quality';
 import { viewer } from '../engine/viewer';
 import { BodyToggle } from '../ui/BodyToggle';
 import { BlockView, type BlockCtx } from './Blocks';
-import { SYSTEM_TOPICS, TOPICS, TOPIC_BY_ID, childTopics, resolveName } from './index';
+import { SYSTEM_TOPICS, TOPICS, TOPIC_BY_ID, childTopics, resolveName, topicFor } from './index';
 import { Rich, plain } from './Rich';
-import { openExplorer, openLearn } from './route';
+import { navBack, openExplorer, openExplorerFresh, openLearn, useCanGoBack } from './route';
+import { FocusCard } from './FocusCard';
+import { useApp } from '../state/store';
 import type { Block, Topic } from './types';
 
-const SECTION_ICON: Record<string, typeof MapPin> = { overview: MapPin, structure: Layers3, function: Activity, clinical: Stethoscope, key: Star };
+const SECTION_ICON: Record<string, typeof MapPin> = {
+  overview: MapPin,
+  structure: Layers3,
+  function: Activity,
+  clinical: Stethoscope,
+  key: Star,
+  applied: Stethoscope,
+  revision: Flame,
+  memory: Lightbulb,
+  relations: Compass,
+  blood: Droplets,
+  coronary: Droplets,
+  vessels: Droplets,
+  tracts: Zap,
+  injuries: Zap,
+  compare: GitCompare,
+  areas: Brain,
+};
 
 function useStored<T extends string>(key: string, initial: T): [T, (v: T) => void] {
   const [v, setV] = useState<T>(() => {
@@ -35,8 +54,16 @@ function useStored<T extends string>(key: string, initial: T): [T, (v: T) => voi
 
 /** Jump from a learning page to the 3D explorer with the structure selected and framed. */
 function showIn3D(id: string) {
-  openExplorer();
+  openExplorerFresh();
   window.setTimeout(() => viewer.selectAndFocus(id), 60);
+}
+
+/** Return to the explorer entry the user came from (selection + camera restored); select `id` if it is not already. */
+function backTo3D(id: string) {
+  openExplorer();
+  window.setTimeout(() => {
+    if (useApp.getState().selectedId !== id) viewer.selectAndFocus(id);
+  }, 80);
 }
 
 function blockText(b: Block): string {
@@ -54,6 +81,16 @@ function blockText(b: Block): string {
       return b.title + ' ' + b.layers.map((l) => l.name + ' ' + l.note).join(' ');
     case 'callout':
       return b.text;
+    case 'mnemonic':
+      return b.title + ' ' + b.phrase + ' ' + b.items.map((x) => x.join(' ')).join(' ');
+    case 'relations':
+      return b.title + ' ' + b.center + ' ' + Object.values(b.sides).join(' ');
+    case 'compare':
+      return b.title + ' ' + b.cols.join(' ') + ' ' + b.rows.flat().join(' ');
+    case 'highyield':
+      return b.items.join(' ');
+    case 'terms':
+      return b.items.flat().join(' ');
     default:
       return '';
   }
@@ -64,8 +101,23 @@ function Hub({ registry }: { registry: Registry | null }) {
   const [q, setQ] = useState('');
   const index = useMemo(() => TOPICS.map((t) => ({ t, hay: topicText(t) })), []);
   const hits = q.trim().length > 1 ? index.filter((x) => q.toLowerCase().split(/\s+/).every((w) => x.hay.includes(w))).map((x) => x.t) : null;
+  const selectedId = useApp((s) => s.selectedId);
+  const sel = registry && selectedId ? registry.get(selectedId) : undefined;
+  const selTopic = registry && sel ? topicFor(registry, sel) : undefined;
   return (
     <div className="lhub">
+      {sel && selTopic && (
+        <button className="lhub-continue" onClick={() => openLearn(selTopic.id, undefined, sel.id)} style={{ ['--sys' as string]: SYSTEM_BY_ID[sel.system].swatch }}>
+          <span className="lsys-dot" />
+          <span className="lhc-text">
+            <small>Selected in 3D</small>
+            <b>{sel.name}</b>
+          </span>
+          <span className="lhc-go">
+            Study it <ArrowRight size={15} />
+          </span>
+        </button>
+      )}
       <header className="lhub-hero">
         <div className="lhub-kicker">
           <GraduationCap size={16} /> Study guides
@@ -198,7 +250,7 @@ function Quiz({ topic, ctx }: { topic: Topic; ctx: BlockCtx }) {
   );
 }
 
-function TopicView({ topic, registry, quality, section }: { topic: Topic; registry: Registry | null; quality: QualityProfile; section?: string }) {
+function TopicView({ topic, registry, quality, section, focusId }: { topic: Topic; registry: Registry | null; quality: QualityProfile; section?: string; focusId?: string }) {
   const scroller = useRef<HTMLElement | null>(null);
   const [active, setActive] = useState(topic.sections[0]?.id ?? '');
   const parent = topic.parent ? TOPIC_BY_ID.get(topic.parent) : undefined;
@@ -209,9 +261,14 @@ function TopicView({ topic, registry, quality, section }: { topic: Topic; regist
   const prev = order[idx - 1];
   const next = order[idx + 1];
   const focus = registry ? resolveName(registry, topic.focus[registry.model]) : undefined;
+  // Structure the guide was opened for (from the 3D explorer). After a body switch the URL id may belong
+  // to the other model; the mapped selection is used then.
+  const selectedId = useApp((s) => s.selectedId);
+  const picked = registry && focusId ? (registry.get(focusId) ?? (selectedId ? registry.get(selectedId) : undefined)) : undefined;
   let fig = 0;
   const ctx: BlockCtx = { registry, quality, onLink: showIn3D, figureNo: () => ++fig };
-  const toc = [...topic.sections.map((s, i) => ({ id: s.id, title: s.title, n: i + 1 })), { id: 'quiz', title: 'Test yourself', n: topic.sections.length + 1 }, { id: 'refs', title: 'References', n: 0 }];
+  const hasQuiz = topic.quiz.length > 0;
+  const toc = [...topic.sections.map((s, i) => ({ id: s.id, title: s.title, n: i + 1 })), ...(hasQuiz ? [{ id: 'quiz', title: 'Test yourself', n: topic.sections.length + 1 }] : []), { id: 'refs', title: 'References', n: 0 }];
 
   useEffect(() => {
     scroller.current = document.querySelector('.learn');
@@ -242,7 +299,13 @@ function TopicView({ topic, registry, quality, section }: { topic: Topic; regist
     if (btn && list && list.scrollWidth > list.clientWidth) list.scrollTo({ left: btn.offsetLeft - 12, behavior: 'smooth' });
   }, [active]);
 
-  const jump = (id: string) => document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Off-screen sections use content-visibility (estimated heights), so correct the landing once rendered.
+  const jump = (id: string) => {
+    const el = document.getElementById(`sec-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 450);
+  };
 
   return (
     <div className="ltopic" style={{ ['--sys' as string]: SYSTEM_BY_ID[topic.system].swatch }}>
@@ -280,18 +343,27 @@ function TopicView({ topic, registry, quality, section }: { topic: Topic; regist
         <h1>{topic.title}</h1>
         <p className="ltagline">{topic.tagline}</p>
         <div className="lactions">
+          {picked && (
+            <button className="lbtn primary" onClick={() => backTo3D(picked.id)}>
+              <Box size={15} /> Back to {picked.name} in 3D
+            </button>
+          )}
           {focus && (
-            <button className="lbtn primary" onClick={() => showIn3D(focus.id)}>
-              <Box size={15} /> Explore in 3D
+            <button className={`lbtn ${picked ? '' : 'primary'}`} onClick={() => showIn3D(focus.id)}>
+              <Box size={15} /> {picked ? `Whole ${topic.title.toLowerCase()} in 3D` : 'Explore in 3D'}
             </button>
           )}
           <button className="lbtn" onClick={() => jump('key')}>
             <Star size={15} /> Key points
           </button>
-          <button className="lbtn" onClick={() => jump('quiz')}>
-            <HelpCircle size={15} /> Test yourself
-          </button>
+          {topic.sections.some((x) => x.id === 'revision') && (
+            <button className="lbtn" onClick={() => jump('revision')}>
+              <Flame size={15} /> Rapid revision
+            </button>
+          )}
         </div>
+
+        {picked && registry && <FocusCard rec={picked} registry={registry} quality={quality} onBack={() => backTo3D(picked.id)} onLink={showIn3D} topicId={topic.id} />}
 
         {topic.sections.map((s, i) => {
           const Icon = SECTION_ICON[s.id] ?? BookMarked;
@@ -309,6 +381,7 @@ function TopicView({ topic, registry, quality, section }: { topic: Topic; regist
           );
         })}
 
+        {hasQuiz && (
         <section id="sec-quiz" className="lsec s-quiz">
           <h2>
             <span className="lsec-n">{topic.sections.length + 1}</span>
@@ -318,6 +391,7 @@ function TopicView({ topic, registry, quality, section }: { topic: Topic; regist
           <p className="lp muted">Answer in your head first, then reveal and mark yourself.</p>
           <Quiz topic={topic} ctx={ctx} />
         </section>
+        )}
 
         <section id="sec-refs" className="lsec s-refs">
           <h2>
@@ -391,7 +465,8 @@ function TopicView({ topic, registry, quality, section }: { topic: Topic; regist
   );
 }
 
-export function LearnPage({ topicId, section, registry, quality, switching, onSwitchModel }: { topicId: string | null; section?: string; registry: Registry | null; quality: QualityProfile; switching: BodyModel | null; onSwitchModel: (m: BodyModel) => void }) {
+export function LearnPage({ topicId, section, focusId, registry, quality, switching, onSwitchModel }: { topicId: string | null; section?: string; focusId?: string; registry: Registry | null; quality: QualityProfile; switching: BodyModel | null; onSwitchModel: (m: BodyModel) => void }) {
+  const canBack = useCanGoBack();
   const topic = topicId ? TOPIC_BY_ID.get(topicId) : undefined;
   const [size, setSize] = useStored<'s' | 'm' | 'l'>('immersa.readSize', 'm');
   const [theme, setTheme] = useStored<'dark' | 'light'>('immersa.readTheme', 'dark');
@@ -404,8 +479,13 @@ export function LearnPage({ topicId, section, registry, quality, switching, onSw
   return (
     <div className={`learn size-${size} theme-${theme}`} role="main">
       <header className="lbar">
-        <button className="lbtn ghost" onClick={openExplorer} title="Back to the 3D explorer">
-          <ArrowLeft size={16} /> <span className="hide-xs">3D explorer</span>
+        {canBack && (
+          <button className="back-btn" onClick={navBack} aria-label="Back" title="Back">
+            <ArrowLeft size={18} />
+          </button>
+        )}
+        <button className="lbtn ghost" onClick={openExplorer} title="Go to the 3D explorer">
+          <Box size={16} /> <span className="hide-xs">3D explorer</span>
         </button>
         <nav className="lcrumbs" aria-label="Breadcrumb">
           <button onClick={() => openLearn(null)} className={!topic ? 'on' : ''}>
@@ -447,7 +527,7 @@ export function LearnPage({ topicId, section, registry, quality, switching, onSw
           </button>
         </div>
       ) : topic ? (
-        <TopicView topic={topic} registry={registry} quality={quality} section={section} />
+        <TopicView topic={topic} registry={registry} quality={quality} section={section} focusId={focusId} />
       ) : (
         <Hub registry={registry} />
       )}

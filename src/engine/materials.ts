@@ -380,7 +380,8 @@ function applySurfaceDetail(m: THREE.MeshStandardMaterial, d: SurfaceDetail, see
         `#include <color_fragment>
         vec3 dFw = fwidth(vDetailPos) / uDetailSize;
         float dFade = 1.0 - smoothstep(0.5, 1.6, max(dFw.x, max(dFw.y, dFw.z)));
-        float dH = detailField(vDetailPos);
+        // Skip the 3-octave noise where the detail is sub-pixel (most of the screen at body scale).
+        float dH = dFade > 0.0 ? detailField(vDetailPos) : 0.5;
         diffuseColor.rgb *= 1.0 - uDetailCavity * dFade * smoothstep(0.62, 0.2, dH);`,
       )
       .replace(
@@ -437,4 +438,67 @@ export function createOutlineMaterial(color: THREE.Color, widthPx: number) {
     transparent: true,
     depthWrite: false,
   });
+}
+
+/**
+ * Key of everything that makes two unit materials render identically apart from their tint, so units
+ * sharing it can be drawn as one merged batch (tint moves into a vertex colour).
+ */
+export function materialKey(m: THREE.MeshStandardMaterial): string {
+  const p = m as THREE.MeshPhysicalMaterial;
+  const d = m.userData.detail as Record<string, { value: number | THREE.Vector3 }> | undefined;
+  const dk = d ? ['uDetailSize', 'uDetailBump', 'uDetailCavity', 'uDetailRim', 'uDetailStretch'].map((k) => (d[k]!.value as number).toFixed(4)).join(',') : '-';
+  return [
+    m.type,
+    m.roughness.toFixed(3),
+    m.metalness.toFixed(3),
+    (p.clearcoat ?? 0).toFixed(3),
+    (p.sheen ?? 0).toFixed(3),
+    ((m.userData.baseOpacity as number) ?? 1).toFixed(3),
+    m.userData.baseSide ?? m.side,
+    m.polygonOffset ? 1 : 0,
+    dk,
+  ].join('|');
+}
+
+/**
+ * Turn a unit material into a merged-batch material: tint from the vertex colour, fibre axis from a
+ * vertex attribute, and a per-unit mask texture that drops units currently drawn on their own
+ * (selected, hovered, sliced, full-resolution or mid-transition) so nothing is drawn twice.
+ */
+export function makeBatchMaterial(m: THREE.MeshStandardMaterial, mask: THREE.DataTexture, maskWidth: number) {
+  m.color.set(0xffffff);
+  m.vertexColors = true;
+  if (m.type === 'MeshPhysicalMaterial') (m as THREE.MeshPhysicalMaterial).sheenColor.set(0xffffff).multiplyScalar(0.72);
+  const prev = m.onBeforeCompile;
+  const prevKey = m.customProgramCacheKey;
+  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|batch-v1';
+  m.onBeforeCompile = (shader, renderer) => {
+    prev.call(m, shader, renderer);
+    shader.uniforms.uUnitMask = { value: mask };
+    shader.uniforms.uMaskW = { value: maskWidth };
+    const hasDetail = shader.fragmentShader.includes('uniform vec3 uDetailAxis;');
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        attribute float aUnit;
+        attribute vec3 aDetailAxis;
+        uniform highp sampler2D uUnitMask;
+        uniform float uMaskW;
+        varying vec3 vBatchAxis;`,
+      )
+      .replace(
+        '#include <project_vertex>',
+        `#include <project_vertex>
+        vBatchAxis = normalize(aDetailAxis + vec3(0.0, 1e-4, 0.0));
+        {
+          ivec2 tc = ivec2(int(mod(aUnit, uMaskW)), int(floor(aUnit / uMaskW)));
+          if (texelFetch(uUnitMask, tc, 0).r < 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        }`,
+      );
+    if (hasDetail) shader.fragmentShader = shader.fragmentShader.replace('uniform vec3 uDetailAxis;', 'varying vec3 vBatchAxis;\n#define uDetailAxis vBatchAxis');
+  };
+  m.needsUpdate = true;
+  return m;
 }

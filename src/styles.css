@@ -3903,3 +3903,752 @@ html.inspect-full .sheet {
 .toolbar .slice-btn.on {
   color: var(--accent);
 }
+
+/* =====================================================================
+   R12: navigation, focus card, bottom sheet, motion & touch polish
+   ===================================================================== */
+:root {
+  --spring: cubic-bezier(0.22, 0.9, 0.24, 1);
+  --press: scale(0.96);
+}
+/* Minimal back button (explorer top bar + Learn bar) */
+.back-btn {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition:
+    transform 0.18s var(--spring),
+    background 0.2s,
+    border-color 0.2s;
+  animation: backIn 0.32s var(--spring);
+}
+.back-btn:hover {
+  border-color: var(--accent);
+}
+.back-btn:active {
+  transform: var(--press);
+}
+@keyframes backIn {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.9);
+  }
+}
+.topbar .back-btn + .brand {
+  width: auto;
+}
+.learn .back-btn {
+  background: var(--l-surface);
+  border-color: var(--l-line-2);
+  color: var(--l-text);
+}
+
+/* Press feedback everywhere on touch (no sticky hover there) */
+.touch button:not(:disabled):active,
+.touch .chip:active,
+.touch .lbtn:active {
+  transform: var(--press);
+}
+.touch button,
+.touch .chip,
+.touch .lbtn {
+  transition-property: transform, background, color, border-color, opacity;
+  transition-duration: 0.16s;
+  transition-timing-function: var(--spring);
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a,
+.chip {
+  -webkit-tap-highlight-color: transparent;
+}
+/* Momentum scrolling + contained overscroll in every scroll area */
+.panel-scroll,
+.inspector,
+.learn,
+.search-results,
+.ltable-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Learn page entrance (and between guides) */
+.learn {
+  animation: learnIn 0.38s var(--spring);
+}
+.ltopic,
+.lhub {
+  animation: pageIn 0.42s var(--spring);
+}
+@keyframes learnIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.app:not(.learning) .viewport {
+  animation: fadeIn 0.35s ease-out;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0.4;
+  }
+}
+
+/* Hub: continue with the structure selected in 3D */
+.lhub-continue {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto 18px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  text-align: left;
+  color: var(--l-text);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--sys) 20%, var(--l-surface)), var(--l-surface) 70%);
+  border: 1px solid color-mix(in srgb, var(--sys) 45%, transparent);
+  transition: transform 0.2s var(--spring), border-color 0.2s;
+}
+.lhub-continue:hover {
+  border-color: var(--sys);
+}
+.lhc-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.lhc-text small {
+  color: var(--l-muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.lhc-text b {
+  font-size: 17px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lhc-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--l-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Focus card: the structure a guide was opened for */
+.lfocus {
+  margin: 6px 0 34px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--l-surface);
+  border: 1px solid color-mix(in srgb, var(--sys) 40%, var(--l-line));
+  box-shadow: 0 24px 60px -34px color-mix(in srgb, var(--sys) 60%, transparent);
+  animation: pageIn 0.45s var(--spring);
+}
+.lfocus-head {
+  padding: 18px 20px 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--sys) 14%, transparent), transparent);
+}
+.lfocus-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--l-muted);
+}
+.lfocus-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--l-line-2);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--l-text-2);
+}
+.lfocus h2 {
+  margin: 6px 0 4px;
+  font-size: 1.6em;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+.lfocus-chain {
+  font-size: 0.82em;
+  color: var(--l-muted);
+}
+.lfocus-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  border-top: 1px solid var(--l-line);
+}
+.lfocus-view .inspect {
+  padding: 0;
+  height: 100%;
+}
+.lfocus-view .inspect-canvas {
+  height: 100%;
+  min-height: 360px;
+  border: 0;
+  border-radius: 0;
+}
+.lfocus-study {
+  padding: 16px 20px 18px;
+  border-left: 1px solid var(--l-line);
+  max-height: 560px;
+  overflow: auto;
+  font-size: 0.92em;
+}
+.lfocus-what {
+  margin: 0 0 12px;
+  font-size: 1.05em;
+  color: var(--l-text);
+}
+.lfocus-sec {
+  margin: 0 0 12px;
+}
+.lfocus-sec h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  font-size: 0.78em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--sys) 70%, var(--l-text));
+}
+.lfocus-sec ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.lfocus-sec li {
+  margin: 3px 0;
+  color: var(--l-text-2);
+}
+.lfocus-sec.k-clinical {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(224, 122, 106, 0.08);
+  border: 1px solid rgba(224, 122, 106, 0.2);
+}
+.lfocus-sec.k-key {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--kw-bg);
+  border: 1px solid rgba(217, 179, 96, 0.25);
+}
+.lfocus-supply {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.lfocus-supply dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--l-muted);
+}
+.lfocus-supply dd {
+  margin: 2px 0 0;
+}
+.lfocus-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--l-line);
+}
+.lfocus-note {
+  font-size: 0.82em;
+  color: var(--l-muted);
+}
+@media (max-width: 860px) {
+  .lfocus-grid {
+    grid-template-columns: 1fr;
+  }
+  .lfocus-view .inspect-canvas {
+    min-height: 0;
+    height: clamp(260px, 42vh, 380px);
+  }
+  .lfocus-study {
+    border-left: 0;
+    border-top: 1px solid var(--l-line);
+    max-height: none;
+  }
+}
+
+/* Draggable bottom sheet (phones) */
+.sheet.bs {
+  top: auto;
+  height: calc(92dvh - env(safe-area-inset-top));
+  max-height: none;
+  animation: none;
+  transform: translate3d(0, 100%, 0);
+  border-radius: 20px 20px 0 0;
+  background: var(--panel-solid);
+}
+.sheet.bs.dragging {
+  transition: none !important;
+}
+.bs-handle {
+  flex: none;
+  touch-action: none;
+  cursor: grab;
+  padding-top: 2px;
+}
+.bs-handle:active {
+  cursor: grabbing;
+}
+.bs-grip {
+  height: 20px;
+  display: grid;
+  place-items: center;
+}
+.bs-grip::after {
+  content: '';
+  width: 42px;
+  height: 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.24);
+}
+.sheet.bs > .panel-scroll,
+.sheet.bs > .tabs + .panel-scroll {
+  flex: 1;
+  min-height: 0;
+}
+.landscape .sheet.bs {
+  height: calc(100dvh - 52px - env(safe-area-inset-top));
+  top: auto;
+}
+
+/* Phone tab bar: clearer active state, bigger targets */
+.mobile-bar {
+  border-radius: 18px;
+  padding: 5px;
+  gap: 2px;
+  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, 0.8);
+}
+.mobile-bar button {
+  height: 46px;
+  min-width: 92px;
+  justify-content: center;
+  border-radius: 13px;
+  font-weight: 500;
+  transition:
+    background 0.25s var(--spring),
+    color 0.2s,
+    transform 0.16s var(--spring);
+}
+.mobile-bar button:active:not(:disabled) {
+  transform: var(--press);
+}
+
+/* Panels: GPU-composited slide, springier */
+.panel {
+  will-change: transform, opacity;
+  transition:
+    transform 0.42s var(--spring),
+    opacity 0.3s var(--spring);
+}
+.panel-toggle {
+  transition:
+    left 0.42s var(--spring),
+    right 0.42s var(--spring),
+    color 0.15s,
+    transform 0.16s var(--spring);
+}
+.panel-toggle:active {
+  transform: var(--press);
+}
+
+/* Tablet: comfortable touch targets and wider readable panels */
+.layout-tablet.touch .tab,
+.layout-tablet.touch .act,
+.layout-tablet.touch .chip {
+  min-height: 40px;
+}
+.layout-tablet {
+  --pw: 320px;
+  --rw: 380px;
+}
+
+/* Learn on phones: compact bar, comfortable reading */
+@media (max-width: 640px) {
+  .lbar {
+    height: 56px;
+    padding: 0 10px;
+    gap: 8px;
+  }
+  .lbar .back-btn {
+    width: 36px;
+    height: 36px;
+  }
+  .lfocus {
+    margin-left: -6px;
+    margin-right: -6px;
+  }
+  .lfocus-head {
+    padding: 14px 14px 10px;
+  }
+  .lfocus-study,
+  .lfocus-foot {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .learn,
+  .ltopic,
+  .lhub,
+  .lfocus,
+  .back-btn {
+    animation: none;
+  }
+}
+
+/* ---------- R12 learning blocks: mnemonic, relations, compare, high-yield, terms, pitfall ---------- */
+.learn {
+  --hy: #ff9f5a;
+  --mn: #8ec5f0;
+  --pf: #c9a0ff;
+}
+.learn.theme-light {
+  --hy: #b8530f;
+  --mn: #1f6fae;
+  --pf: #6b3fb5;
+}
+.lcall.pitfall {
+  border-left-color: var(--pf);
+}
+.lcall.pitfall > svg {
+  color: var(--pf);
+}
+.lmnem,
+.lrel,
+.lcmp,
+.lhy {
+  margin: 8px 0 22px;
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--l-surface);
+  border: 1px solid var(--l-line);
+}
+.lmnem {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--mn) 10%, var(--l-surface)), var(--l-surface) 60%);
+  border-color: color-mix(in srgb, var(--mn) 35%, var(--l-line));
+}
+.lmnem-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mn);
+}
+.lmnem-phrase {
+  margin: 8px 0 14px;
+  font-size: 1.22em;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--l-text);
+  line-height: 1.35;
+}
+.lmnem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+  gap: 8px;
+}
+.lmnem-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--l-surface-2);
+  border: 1px solid var(--l-line);
+  line-height: 1.35;
+}
+.lmnem-k {
+  flex: none;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 6px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.05em;
+  color: #0c1520;
+  background: var(--mn);
+}
+.lmnem-v {
+  font-size: 0.94em;
+}
+.lmnem-note {
+  margin-top: 12px;
+  font-size: 0.88em;
+  color: var(--l-muted);
+}
+/* relations compass */
+.lrel-grid {
+  display: grid;
+  grid-template-columns: 1fr minmax(110px, 0.8fr) 1fr;
+  grid-template-areas:
+    'sup sup sup'
+    'ant ant ant'
+    'med ctr lat'
+    'pos pos pos'
+    'inf inf inf';
+  gap: 8px;
+}
+.lrel-superior {
+  grid-area: sup;
+}
+.lrel-anterior {
+  grid-area: ant;
+}
+.lrel-medial {
+  grid-area: med;
+}
+.lrel-center {
+  grid-area: ctr;
+}
+.lrel-lateral {
+  grid-area: lat;
+}
+.lrel-posterior {
+  grid-area: pos;
+}
+.lrel-inferior {
+  grid-area: inf;
+}
+.lrel-c {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--l-surface-2);
+  border: 1px solid var(--l-line);
+  font-size: 0.92em;
+  line-height: 1.4;
+}
+.lrel-c.empty {
+  display: none;
+}
+.lrel-dir {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--sys) 75%, var(--l-text));
+  margin-bottom: 2px;
+}
+.lrel-center {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 14px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: var(--l-text);
+  background: radial-gradient(circle, color-mix(in srgb, var(--sys) 30%, transparent), color-mix(in srgb, var(--sys) 8%, transparent));
+  border: 1.5px solid color-mix(in srgb, var(--sys) 60%, transparent);
+  min-height: 70px;
+}
+@media (max-width: 560px) {
+  .lrel-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      'ctr ctr'
+      'sup sup'
+      'ant ant'
+      'med lat'
+      'pos pos'
+      'inf inf';
+  }
+  .lrel-center {
+    border-radius: 12px;
+    min-height: 0;
+  }
+}
+/* compare */
+.lcmp-grid {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.6fr) repeat(var(--n), minmax(0, 1fr));
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--l-line);
+}
+.lcmp-row {
+  display: contents;
+}
+.lcmp-corner,
+.lcmp-col,
+.lcmp-label,
+.lcmp-cell {
+  padding: 9px 12px;
+  border-top: 1px solid var(--l-line);
+  font-size: 0.92em;
+  line-height: 1.45;
+}
+.lcmp-corner,
+.lcmp-col {
+  border-top: 0;
+}
+.lcmp-col {
+  font-weight: 700;
+  text-align: center;
+}
+.lcmp-col.c0,
+.lcmp-cell.c0 {
+  background: color-mix(in srgb, #8ec5f0 9%, transparent);
+}
+.lcmp-col.c1,
+.lcmp-cell.c1 {
+  background: color-mix(in srgb, #e48978 9%, transparent);
+}
+.lcmp-col.c2,
+.lcmp-cell.c2 {
+  background: color-mix(in srgb, #9cc24a 9%, transparent);
+}
+.lcmp-col.c0 {
+  color: #8ec5f0;
+}
+.lcmp-col.c1 {
+  color: #e48978;
+}
+.lcmp-col.c2 {
+  color: #9cc24a;
+}
+.theme-light .lcmp-col.c0 {
+  color: #1f6fae;
+}
+.theme-light .lcmp-col.c1 {
+  color: #b2442f;
+}
+.theme-light .lcmp-col.c2 {
+  color: #4c7413;
+}
+.lcmp-label {
+  font-weight: 600;
+  color: var(--l-muted);
+  font-size: 0.82em;
+  letter-spacing: 0.02em;
+}
+@media (max-width: 560px) {
+  .lcmp-grid {
+    grid-template-columns: repeat(var(--n), minmax(0, 1fr));
+  }
+  .lcmp-corner {
+    display: none;
+  }
+  .lcmp-label {
+    grid-column: 1 / -1;
+    padding-bottom: 2px;
+    background: var(--l-surface-2);
+  }
+  .lcmp-cell {
+    border-top: 0;
+  }
+}
+/* high-yield */
+.lhy {
+  border-color: color-mix(in srgb, var(--hy) 40%, var(--l-line));
+  background: linear-gradient(160deg, color-mix(in srgb, var(--hy) 10%, var(--l-surface)), var(--l-surface) 55%);
+}
+.lhy-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--hy);
+  margin-bottom: 8px;
+}
+.lhy ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.lhy li {
+  position: relative;
+  padding: 7px 10px 7px 30px;
+  border-radius: 9px;
+  background: var(--l-surface-2);
+  line-height: 1.5;
+}
+.lhy li::before {
+  content: '★';
+  position: absolute;
+  left: 10px;
+  top: 7px;
+  color: var(--hy);
+  font-size: 0.85em;
+}
+/* terms */
+.lterms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 8px;
+  margin: 6px 0 20px;
+}
+.lterms > div {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--l-surface);
+  border: 1px solid var(--l-line);
+}
+.lterms dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--kw);
+}
+.lterms dd {
+  margin: 4px 0 0;
+  font-size: 0.92em;
+  color: var(--l-text-2);
+  line-height: 1.45;
+}
+/* Long guides: skip layout/paint of off-screen sections until scrolled near (big win on low-end phones). */
+.lsec:nth-of-type(n + 3) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 900px;
+}
+.lfig-cov {
+  color: var(--l-muted);
+  font-style: normal;
+}

@@ -72,7 +72,7 @@ export class ModelLibrary {
     this.base = `${import.meta.env.BASE_URL}models/${model}/`;
   }
   private systems = new Map<SystemId, Promise<Map<string, LoadedUnit>>>();
-  private hi = new Map<string, { p: Promise<Map<string, LoadedUnit>>; used: number; ctrl: AbortController }>();
+  private hi = new Map<string, { p: Promise<Map<string, LoadedUnit>>; used: number; ctrl: AbortController; settled: boolean }>();
   private maxHiChunks = 6;
   private pins = new Map<string, number>();
   /** Optional sink so evicted hi-res geometry is removed from any scene before disposal. */
@@ -99,9 +99,15 @@ export class ModelLibrary {
     }
     const ctrl = new AbortController();
     const p = fetchWithProgress(`${this.base}hi/${chunk}.glb`, ctrl.signal).then(parseUnits);
-    const entry = { p, used: performance.now(), ctrl };
+    const entry = { p, used: performance.now(), ctrl, settled: false };
     this.hi.set(chunk, entry);
-    p.catch(() => this.hi.delete(chunk));
+    p.then(
+      () => {
+        entry.settled = true;
+        this.evict(chunk);
+      },
+      () => this.hi.get(chunk) === entry && this.hi.delete(chunk),
+    );
     this.evict(chunk);
     return p;
   }
@@ -123,11 +129,12 @@ export class ModelLibrary {
 
   private evict(protect: string) {
     if (this.hi.size <= this.maxHiChunks) return;
-    const sorted = [...this.hi.entries()].filter(([k]) => k !== protect && !this.pins.has(k)).sort((a, b) => a[1].used - b[1].used);
+    // Only finished downloads are evicted: aborting an in-flight chunk would fail whichever view is
+    // about to use it (the inspector then stayed on the simplified mesh).
+    const sorted = [...this.hi.entries()].filter(([k, e]) => k !== protect && e.settled && !this.pins.has(k)).sort((a, b) => a[1].used - b[1].used);
     while (this.hi.size > this.maxHiChunks && sorted.length) {
       const [k, e] = sorted.shift()!;
       this.hi.delete(k);
-      e.ctrl.abort();
       e.p
         .then((units) => {
           this.onEvictHi?.(k, units);

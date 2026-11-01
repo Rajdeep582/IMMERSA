@@ -12,6 +12,8 @@ import { HOME_POSE, STANDARD_VIEWS, poseForBox, type CameraRig } from './cameraR
 class ViewerApi {
   rig: CameraRig | null = null;
   scene: AnatomyScene | null = null;
+  /** Renderer handles for diagnostics (benchmarks, console). */
+  debug: { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera } | null = null;
   registry: Registry | null = null;
   invalidate: () => void = () => undefined;
   /** Per-frame hooks (DOM overlays that track 3D positions). */

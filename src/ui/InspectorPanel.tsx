@@ -12,7 +12,7 @@ import { SliceControl } from './SliceControl';
 import { useApp } from '../state/store';
 import { SYSTEM_TOPICS, TOPIC_BY_ID, studyFor, type Study } from '../learn';
 import { Rich } from '../learn/Rich';
-import { openLearn } from '../learn/route';
+import { openLearn, useRoute } from '../learn/route';
 
 function Chips({ items, max = 18 }: { items: StructureRecord[]; max?: number }) {
   if (!items.length) return null;
@@ -47,7 +47,7 @@ const STUDY_SECTIONS: { key: 'location' | 'structure' | 'functions' | 'clinical'
 ];
 
 /** Structured study card: what it is → location → structure → function → clinical → key points. */
-function StudyCard({ study, registry, topicTitle }: { study: Study; registry: Registry; topicTitle?: string }) {
+function StudyCard({ study, registry, topicTitle, recId }: { study: Study; registry: Registry; topicTitle?: string; recId: string }) {
   const link = (id: string) => viewer.selectAndFocus(id);
   const present = STUDY_SECTIONS.filter((x) => (study[x.key]?.length ?? 0) > 0);
   const jump = (k: string) => document.getElementById(`sc-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -113,7 +113,7 @@ function StudyCard({ study, registry, topicTitle }: { study: Study; registry: Re
         </p>
       )}
       {study.topic && topicTitle && (
-        <button className="study-more" onClick={() => openLearn(study.topic!)}>
+        <button className="study-more" onClick={() => openLearn(study.topic!, undefined, recId)}>
           <GraduationCap size={16} />
           <span>
             <small>Study guide</small>
@@ -137,6 +137,7 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
   const toggleHidden = useApp((s) => s.toggleHidden);
   const toggleFaded = useApp((s) => s.toggleFaded);
   const rec = registry.get(selectedId);
+  const learning = useRoute().view === 'learn';
 
   const info = useMemo(() => {
     if (!rec) return null;
@@ -286,12 +287,12 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
               Hide
             </button>
           </div>
-          <InspectViewport registry={registry} targetId={rec.id} quality={quality} />
+          {learning ? <div className="inspect" /> : <InspectViewport registry={registry} targetId={rec.id} quality={quality} />}
         </div>
       )}
 
       <div className="insp-body">
-        <StudyCard study={st} registry={registry} topicTitle={topic?.title} />
+        <StudyCard study={st} registry={registry} topicTitle={topic?.title} recId={rec.id} />
 
         <dl className="facts">
           {rec.fma && (

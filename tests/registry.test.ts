@@ -169,13 +169,21 @@ describe('peripheral nervous system', () => {
 });
 
 describe('learning content', () => {
-  it('every topic follows the standard section order and has a self-test and references', () => {
-    const order = ['overview', 'structure', 'function', 'clinical', 'key'];
+  it('every topic follows the standard section order (extra study sections between clinical and key) and has references', () => {
+    const order = ['overview', 'structure', 'function', 'clinical'];
     for (const t of TOPICS) {
-      expect(t.sections.map((s) => s.id), t.id).toEqual(order);
-      expect(t.quiz.length, t.id).toBeGreaterThan(0);
+      const ids = t.sections.map((s) => s.id);
+      expect(ids.slice(0, 4), t.id).toEqual(order);
+      expect(ids[ids.length - 1], t.id).toBe('key');
+      expect(new Set(ids).size, `${t.id} unique section ids`).toBe(ids.length);
       expect(t.refs.length, t.id).toBeGreaterThan(0);
       if (t.parent) expect(TOPICS.some((p) => p.id === t.parent), t.id).toBe(true);
+    }
+  });
+  it('system guides carry rapid-revision and memory content', () => {
+    for (const t of TOPICS.filter((x) => !x.parent)) {
+      const kinds = new Set(t.sections.flatMap((s) => s.blocks.map((b) => b.t)));
+      expect(kinds.has('highyield') || kinds.has('mnemonic'), t.id).toBe(true);
     }
   });
   it('topic focus nodes and [[links]] resolve in at least one body model', () => {

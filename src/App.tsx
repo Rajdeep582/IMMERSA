@@ -1,4 +1,4 @@
-import { BookOpen, GraduationCap, Layers, ListTree, X, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, BookOpen, GraduationCap, Layers, ListTree, X, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { loadRegistry, mapSelection, type Registry } from './data/registry';
 import type { BodyModel } from './data/types';
@@ -20,8 +20,22 @@ import { SourcesPanel } from './ui/SourcesPanel';
 import { Toolbar } from './ui/Toolbar';
 import { SliceControl } from './ui/SliceControl';
 import { useLayout } from './ui/layout';
+import { BottomSheet } from './ui/BottomSheet';
 import { LearnPage } from './learn/LearnPage';
-import { getRoute, openLearn, useRoute } from './learn/route';
+import { getRoute, navBack, openLearn, useCanGoBack, useRoute } from './learn/route';
+import { topicFor } from './learn';
+import { installNav } from './ui/nav';
+
+installNav();
+
+/** Learn from the explorer: with a selection, its guide opened for that structure; otherwise the hub. */
+function learnFromExplorer(registry: Registry | null) {
+  const id = useApp.getState().selectedId;
+  const rec = registry && id ? registry.get(id) : undefined;
+  const t = registry && rec ? topicFor(registry, rec) : undefined;
+  if (rec && t) openLearn(t.id, undefined, rec.id);
+  else openLearn(null);
+}
 
 function useKeyboard() {
   useEffect(() => {
@@ -125,6 +139,7 @@ export function App() {
   const sliceOpen = useApp((s) => s.sliceOpen);
   const route = useRoute();
   const learning = route.view === 'learn';
+  const canBack = useCanGoBack();
   useKeyboard();
 
   useEffect(() => {
@@ -218,6 +233,10 @@ export function App() {
     if (mobile && selectedId && !guided && !useApp.getState().immersive) setSheet('info');
   }, [mobile, selectedId, guided]);
 
+  useEffect(() => {
+    if (!hasGL || error) window.__intro?.done();
+  }, [hasGL, error]);
+
   if (!hasGL)
     return (
       <div className="fatal">
@@ -254,12 +273,17 @@ export function App() {
         .filter(Boolean)
         .join(' ')}
     >
-      {registry && <MainViewport registry={registry} quality={quality} />}
+      {registry && <MainViewport registry={registry} quality={quality} paused={learning} />}
       {registry && <HoverLabel registry={registry} />}
       {registry && <SelectionPin key={registry.model} registry={registry} />}
       <LoadingVeil />
 
       <header className="topbar">
+        {canBack && !learning && (
+          <button className="back-btn" onClick={navBack} aria-label="Back" title="Back">
+            <ArrowLeft size={18} />
+          </button>
+        )}
         <div className="brand" aria-label="Immersa">
           <span className="brand-mark" aria-hidden />
           <span className="brand-name">Immersa</span>
@@ -267,7 +291,7 @@ export function App() {
         </div>
         {registry && <BodyToggle value={registry.model} pending={switching} onChange={switchModel} />}
         {registry && !mobile && <Search registry={registry} />}
-        <button className="learn-btn" onClick={() => openLearn(null)} title="Study guides: structured notes for every system">
+        <button className="learn-btn" onClick={() => learnFromExplorer(registry)} title="Study guides: structured notes for every system">
           <GraduationCap size={16} /> <span>Learn</span>
         </button>
       </header>
@@ -323,24 +347,28 @@ export function App() {
             <button className={sheet === 'info' ? 'on' : ''} onClick={() => setSheet(sheet === 'info' ? 'none' : 'info')} disabled={!selectedId}>
               <BookOpen size={16} /> Details
             </button>
-            <button onClick={() => openLearn(null)}>
+            <button onClick={() => learnFromExplorer(registry)}>
               <GraduationCap size={16} /> Learn
             </button>
           </nav>
           {sheet !== 'none' && (
-            <div className="sheet" role="dialog" aria-label={sheet === 'left' ? 'Layers and search' : 'Structure details'}>
-              <div className="sheet-grip" onClick={() => setSheet('none')} aria-hidden />
-              <div className="sheet-head" role="tablist">
-                <button role="tab" aria-selected={sheet === 'left'} className={sheet === 'left' ? 'on' : ''} onClick={() => setSheet('left')}>
-                  <Layers size={15} /> Browse
-                </button>
-                <button role="tab" aria-selected={sheet === 'info'} className={sheet === 'info' ? 'on' : ''} onClick={() => setSheet('info')} disabled={!selectedId}>
-                  <BookOpen size={15} /> Details
-                </button>
-                <button className="icon-btn sm ghost sheet-close" onClick={() => setSheet('none')} aria-label="Close panel">
-                  <X size={16} />
-                </button>
-              </div>
+            <BottomSheet
+              label={sheet === 'left' ? 'Layers and search' : 'Structure details'}
+              onClose={() => setSheet('none')}
+              header={
+                <div className="sheet-head" role="tablist">
+                  <button role="tab" aria-selected={sheet === 'left'} className={sheet === 'left' ? 'on' : ''} onClick={() => setSheet('left')}>
+                    <Layers size={15} /> Browse
+                  </button>
+                  <button role="tab" aria-selected={sheet === 'info'} className={sheet === 'info' ? 'on' : ''} onClick={() => setSheet('info')} disabled={!selectedId}>
+                    <BookOpen size={15} /> Details
+                  </button>
+                  <button className="icon-btn sm ghost sheet-close" onClick={() => setSheet('none')} aria-label="Close panel">
+                    <X size={16} />
+                  </button>
+                </div>
+              }
+            >
               {sheet === 'left' ? (
                 <>
                   <Search registry={registry} onPicked={() => setSheet('info')} />
@@ -351,7 +379,7 @@ export function App() {
                   <InspectorPanel registry={registry} quality={quality} />
                 </div>
               )}
-            </div>
+            </BottomSheet>
           )}
         </>
       )}
@@ -362,6 +390,7 @@ export function App() {
         <LearnPage
           topicId={route.view === 'learn' ? route.topic : null}
           section={route.view === 'learn' ? route.section : undefined}
+          focusId={route.view === 'learn' ? route.focusId : undefined}
           registry={registry}
           quality={quality}
           switching={switching}

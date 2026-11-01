@@ -4,9 +4,10 @@ import type { Registry } from '../data/registry';
 import type { SystemOpacity } from '../data/systems';
 import type { SystemId } from '../data/types';
 import type { AppState } from '../state/store';
-import { ACCENT, HOVER, createOutlineMaterial, createSliceUniforms, createUnitMaterial, setDetailAxis } from './materials';
+import { ACCENT, HOVER, createOutlineMaterial, createSliceUniforms, createUnitMaterial, makeBatchMaterial, materialKey, setDetailAxis } from './materials';
 import type { LoadedUnit } from './models';
-import { sliceSplitter } from './sliceSplitter';
+import { flatAttr, sliceSplitter } from './sliceSplitter';
+import { mergeUnits, type MergeResult, type MergeUnit } from './sliceWorker';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -42,6 +43,36 @@ interface UnitView {
   /** Worker-cut copy of baseGeom for one slab layout. */
   split: { geom: THREE.BufferGeometry; key: string } | null;
   splitPending: string | null;
+  /** Logically visible (opacity above zero) — independent of whether it is drawn alone or in a batch. */
+  logicalVisible: boolean;
+  batch: Batch | null;
+  batchIndex: number;
+  /** Currently drawn by its batch (own mesh hidden). */
+  inBatch: boolean;
+  gpuFreed: boolean;
+  /** Cached world-space bounding sphere for ray prefiltering. */
+  wsphere: THREE.Sphere | null;
+}
+
+/**
+ * Units of one system that share a material look, merged into one draw call. Units that need their
+ * own state (selection, hover, slicing, full-resolution mesh, a different opacity) are masked out of
+ * the batch and drawn by their own mesh, so visuals and interaction are unchanged.
+ */
+interface Batch {
+  key: string;
+  system: SystemId;
+  mesh: THREE.Mesh;
+  material: THREE.MeshStandardMaterial;
+  units: UnitView[];
+  mask: Uint8Array;
+  maskTex: THREE.DataTexture;
+  maskDirty: boolean;
+  opacityTarget: number;
+  opacity: number;
+  baseOpacity: number;
+  tint: THREE.Color;
+  members: number;
 }
 
 export interface PickHit {
@@ -91,11 +122,12 @@ export class AnatomyScene {
   private layoutKey = '';
   /** Called when asynchronous work (worker-cut slabs) changes what should be drawn. */
   onAsync: (() => void) | null = null;
+  private batches: Batch[] = [];
 
   constructor(
     private registry: Registry,
     tier: 'low' | 'medium' | 'high',
-    private opts: { ghostOpacity?: number } = {},
+    private opts: { ghostOpacity?: number; batch?: boolean } = {},
   ) {
     this.tier = tier;
     this.root.name = 'anatomy';
@@ -111,6 +143,7 @@ export class AnatomyScene {
   }
 
   addUnits(system: SystemId, loaded: Map<string, LoadedUnit>, filter?: (fj: string) => boolean) {
+    const added: UnitView[] = [];
     for (const u of loaded.values()) {
       if (this.units.has(u.fj) || (filter && !filter(u.fj))) continue;
       const sid = this.registry.unitStructure.get(u.fj);
@@ -152,8 +185,15 @@ export class AnatomyScene {
         baseGeom: u.geometry,
         split: null,
         splitPending: null,
+        logicalVisible: false,
+        batch: null,
+        batchIndex: -1,
+        inBatch: false,
+        gpuFreed: false,
+        wsphere: null,
       };
       this.units.set(u.fj, view);
+      added.push(view);
       this.root.add(mesh);
       if (this.state) this.computeUnit(view, this.state);
       this.syncSliceFlag(view);
@@ -162,6 +202,7 @@ export class AnatomyScene {
       this.syncMaterial(view);
     }
     this.pickDirty = true;
+    if (this.opts.batch && added.length) this.buildBatches(system, added);
     // Structures that arrive while dissecting join the slab layout (recompute the region).
     if (this.state && this.state.explode > 0.001) {
       this.sliceKey = '';
@@ -191,6 +232,7 @@ export class AnatomyScene {
     v.mesh.position.copy(v.basePosition).add(v.offset);
     if (v.outline) v.outline.geometry = v.mesh.geometry;
     this.pickDirty = true;
+    v.wsphere = null;
     // A geometry swap invalidates any cut copy.
     if (v.split) {
       v.split.geom.dispose();
@@ -251,6 +293,7 @@ export class AnatomyScene {
     if (st.selectedId !== prevSel) this.selectedAt = performance.now();
     for (const v of this.units.values()) this.computeUnit(v, st);
     this.updateSlicing(st, prev);
+    for (const b of this.batches) b.opacityTarget = modeOpacity(b.units);
     this.selCount = 0;
     this.hoverCount = 0;
     for (const v of this.units.values()) {
@@ -258,6 +301,7 @@ export class AnatomyScene {
       if (v.hoverTarget) this.hoverCount++;
     }
     for (const v of this.units.values()) this.syncOutline(v);
+    this.syncBatches();
   }
 
   /**
@@ -450,6 +494,13 @@ export class AnatomyScene {
         animating = true;
       }
     }
+    for (const b of this.batches) {
+      if (Math.abs(b.opacity - b.opacityTarget) > 0.002) {
+        b.opacity += (b.opacityTarget - b.opacity) * k;
+        animating = true;
+      } else b.opacity = b.opacityTarget;
+    }
+    this.syncBatches();
     return animating;
   }
 
@@ -457,10 +508,11 @@ export class AnatomyScene {
     const m = v.material;
     const o = v.opacity * v.baseOpacity;
     const visible = o > 0.004;
-    if (v.mesh.visible !== visible) {
-      v.mesh.visible = visible;
+    if (v.logicalVisible !== visible) {
+      v.logicalVisible = visible;
       this.pickDirty = true;
     }
+    v.mesh.visible = visible && !v.inBatch;
     const transparent = o < 0.995;
     if (m.transparent !== transparent) {
       m.transparent = transparent;
@@ -514,7 +566,7 @@ export class AnatomyScene {
   private refreshPickables() {
     if (!this.pickDirty) return;
     this.pickables = [];
-    for (const v of this.units.values()) if (v.mesh.visible && v.opacityTarget * v.baseOpacity >= PICK_MIN_OPACITY) this.pickables.push(v.mesh);
+    for (const v of this.units.values()) if (v.logicalVisible && v.opacityTarget * v.baseOpacity >= PICK_MIN_OPACITY) this.pickables.push(v.mesh);
     this.pickDirty = false;
   }
 
@@ -552,9 +604,18 @@ export class AnatomyScene {
     const sl = this.sliceState();
     const spread = sl ? ((sl.n - 1) / 2) * this.slice.uSliceGap.value : 0;
     return this.pickables.filter((m) => {
-      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
-      s.copy(m.geometry.boundingSphere!).applyMatrix4(m.matrixWorld);
-      if (spread && this.units.get(m.userData.fj as string)?.sliced) s.radius += spread;
+      const v = this.units.get(m.userData.fj as string);
+      if (v && !v.wsphere) {
+        if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+        m.updateMatrixWorld();
+        v.wsphere = m.geometry.boundingSphere!.clone().applyMatrix4(m.matrixWorld);
+      }
+      if (v?.wsphere) s.copy(v.wsphere);
+      else {
+        if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+        s.copy(m.geometry.boundingSphere!).applyMatrix4(m.matrixWorld);
+      }
+      if (spread && v?.sliced) s.radius += spread;
       return ray.intersectsSphere(s);
     });
   }
@@ -679,15 +740,258 @@ export class AnatomyScene {
     return any ? box : null;
   }
 
+  // ---------- shader warm-up ----------
+  private warm: THREE.Group | null = null;
+  /**
+   * Compile every shader variant the model will need while its meshes are still downloading:
+   * one material per distinct look (unit and merged-batch versions, opaque and translucent), drawn
+   * off-screen. With KHR_parallel_shader_compile this runs off the main thread; without it the cost
+   * still overlaps the network instead of freezing the first frame after loading.
+   */
+  prewarm(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<void> {
+    if (this.warm) return Promise.resolve();
+    const seen = new Set<string>();
+    const group = new THREE.Group();
+    group.position.set(0, -1000, 0);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.001, 0, 0, 0, 0.001, 0], 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute([1, 1, 1, 1, 1, 1, 1, 1, 1], 3));
+    geo.setAttribute('aDetailAxis', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
+    geo.setAttribute('aUnit', new THREE.Float32BufferAttribute([0, 0, 0], 1));
+    geo.setAttribute('aSlab', new THREE.Float32BufferAttribute([0, 0, 0], 1));
+    const tex = new THREE.DataTexture(new Uint8Array(256), 256, 1, THREE.RedFormat, THREE.UnsignedByteType);
+    tex.needsUpdate = true;
+    const female = this.registry.model === 'female';
+    for (const rec of this.registry.structures.values()) {
+      if (rec.kind !== 'structure' || !rec.units?.length) continue;
+      const probe = createUnitMaterial(rec.system, rec.name, 'warm', this.tier, !!rec.landmark, female, this.slice);
+      const key = `${rec.system}|${materialKey(probe)}`;
+      if (seen.has(key)) {
+        probe.dispose();
+        continue;
+      }
+      seen.add(key);
+      const mats: THREE.Material[] = [probe];
+      const t = createUnitMaterial(rec.system, rec.name, 'warm', this.tier, !!rec.landmark, female, this.slice);
+      t.transparent = true;
+      t.opacity = 0.5;
+      mats.push(t);
+      if (this.opts.batch) {
+        for (const transparent of [false, true]) {
+          const bm = makeBatchMaterial(createUnitMaterial(rec.system, rec.name, 'warm', this.tier, !!rec.landmark, female), tex, 256);
+          bm.transparent = transparent;
+          mats.push(bm);
+        }
+      }
+      for (const m of mats) {
+        const mesh = new THREE.Mesh(geo, m);
+        mesh.frustumCulled = false;
+        group.add(mesh);
+      }
+    }
+    this.warm = group;
+    return gl
+      .compileAsync(group, camera, scene)
+      .catch(() => undefined)
+      .then(() => undefined);
+    // The warm-up materials stay referenced for the session so translucent/opaque variants are never
+    // released and recompiled when layers fade in and out (they are tiny and never drawn).
+  }
+
+  /** Drop warm-up meshes (their programs stay cached while real materials use them). */
+  releaseWarmup() {
+    const g = this.warm;
+    if (!g) return;
+    for (const c of g.children) ((c as THREE.Mesh).material as THREE.Material).dispose();
+    this.warm = null;
+  }
+
+  // ---------- merged batches ----------
+  private buildBatches(system: SystemId, views: UnitView[]) {
+    const groups = new Map<string, UnitView[]>();
+    for (const v of views) {
+      if (v.material.userData.overlay) continue;
+      const k = `${system}|${materialKey(v.material)}`;
+      let g = groups.get(k);
+      if (!g) groups.set(k, (g = []));
+      g.push(v);
+    }
+    for (const [key, units] of groups) {
+      if (units.length < 2) continue;
+      const mu: MergeUnit[] = units.map((v) => {
+        const p = flatAttr(v.loGeometry.getAttribute('position') as THREE.BufferAttribute);
+        const na = v.loGeometry.getAttribute('normal') as THREE.BufferAttribute | undefined;
+        const n = na ? flatAttr(na) : null;
+        const idx = v.loGeometry.index ? ((v.loGeometry.index.array as Uint16Array | Uint32Array).slice() as Uint16Array | Uint32Array) : null;
+        const m = new THREE.Matrix4().compose(v.loTransform.position, v.loTransform.quaternion, v.loTransform.scale);
+        const ax = (v.material.userData.detail as { uDetailAxis?: { value: THREE.Vector3 } } | undefined)?.uDetailAxis?.value ?? new THREE.Vector3(0, 1, 0);
+        return { pos: p.arr, posNorm: p.norm, posSize: p.size, nrm: n?.arr ?? null, nrmNorm: n?.norm ?? false, idx, m: m.toArray(), color: [v.baseColor.r, v.baseColor.g, v.baseColor.b], axis: [ax.x, ax.y, ax.z] };
+      });
+      sliceSplitter
+        .merge(mu)
+        .catch(() => mergeUnits({ kind: 'merge', id: 0, units: mu }))
+        .then((r) => this.addBatch(key, system, units, r))
+        .catch((e: unknown) => console.warn('batch build failed', e));
+    }
+  }
+
+  private addBatch(key: string, system: SystemId, units: UnitView[], r: MergeResult) {
+    if (units.some((v) => !this.units.has(v.fj))) return; // scene disposed / model switched meanwhile
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(r.pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(r.nrm, 3, true));
+    g.setAttribute('color', new THREE.BufferAttribute(r.color, 3, true));
+    g.setAttribute('aDetailAxis', new THREE.BufferAttribute(r.axis, 3, true));
+    g.setAttribute('aUnit', new THREE.BufferAttribute(r.unit, 1, false));
+    g.setIndex(new THREE.BufferAttribute(r.idx, 1));
+    g.computeBoundingSphere();
+    g.computeBoundingBox();
+    const W = 256;
+    const H = Math.ceil(units.length / W);
+    const mask = new Uint8Array(W * H);
+    const tex = new THREE.DataTexture(mask, W, H, THREE.RedFormat, THREE.UnsignedByteType);
+    tex.magFilter = tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    const rep = units[0]!;
+    const repRec = this.registry.get(rep.structureId);
+    const mat = makeBatchMaterial(
+      createUnitMaterial(system, repRec?.name ?? '', key, this.tier, !!repRec?.landmark, this.registry.model === 'female'),
+      tex,
+      W,
+    );
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.name = `batch:${system}`;
+    mesh.matrixAutoUpdate = false;
+    mesh.raycast = () => undefined;
+    const tint = new THREE.Color(0, 0, 0);
+    for (const v of units) tint.add(v.baseColor);
+    tint.multiplyScalar(1 / units.length);
+    const b: Batch = {
+      key,
+      system,
+      mesh,
+      material: mat,
+      units,
+      mask,
+      maskTex: tex,
+      maskDirty: false,
+      opacityTarget: modeOpacity(units),
+      opacity: median(units.map((v) => v.opacity)),
+      baseOpacity: (mat.userData.baseOpacity as number | undefined) ?? 1,
+      tint,
+      members: 0,
+    };
+    units.forEach((v, i) => {
+      v.batch = b;
+      v.batchIndex = i;
+    });
+    this.batches.push(b);
+    this.root.add(mesh);
+    this.syncBatches();
+    this.onAsync?.();
+  }
+
+  private batchable(v: UnitView, b: Batch) {
+    return (
+      !v.sliced &&
+      v.mesh.geometry === v.loGeometry &&
+      !this.hiActive.has(v.fj) &&
+      v.highlightTarget === 0 &&
+      v.highlight < 0.002 &&
+      v.hoverTarget === 0 &&
+      v.hover < 0.002 &&
+      v.opacityTarget === b.opacityTarget &&
+      Math.abs(v.opacity - b.opacity) < 0.012 &&
+      !v.material.wireframe
+    );
+  }
+
+  /** Move units between their batch and their own mesh as their state diverges or converges. */
+  private syncBatches() {
+    for (const b of this.batches) {
+      let members = 0;
+      for (const v of b.units) {
+        const want = this.batchable(v, b);
+        if (want !== v.inBatch) {
+          v.inBatch = want;
+          b.mask[v.batchIndex] = want ? 255 : 0;
+          b.maskDirty = true;
+          v.mesh.visible = v.logicalVisible && !want;
+          // Drawn by the batch from now on: free the unit's own GPU buffers (re-uploaded on demand).
+          if (want && !v.gpuFreed) {
+            v.gpuFreed = true;
+            v.loGeometry.dispose();
+          }
+        }
+        if (want) members++;
+      }
+      b.members = members;
+      if (b.maskDirty) {
+        b.maskTex.needsUpdate = true;
+        b.maskDirty = false;
+      }
+      const m = b.material;
+      const o = b.opacity * b.baseOpacity;
+      b.mesh.visible = members > 0 && o > 0.004;
+      const transparent = o < 0.995;
+      if (m.transparent !== transparent) {
+        m.transparent = transparent;
+        m.needsUpdate = true;
+      }
+      m.opacity = o;
+      m.depthWrite = o > 0.55;
+      b.mesh.renderOrder = transparent ? 1 : 0;
+      m.emissive.setRGB(0, 0, 0);
+      if (b.system === 'integumentary' && o < 0.9) m.emissive.copy(b.tint).multiplyScalar(0.4 * (1 - o));
+    }
+  }
+
+  /** Draw-call diagnostics: [merged batches drawn, units drawn on their own]. */
+  batchStats(): [number, number] {
+    let solo = 0;
+    for (const v of this.units.values()) if (v.mesh.visible) solo++;
+    return [this.batches.filter((b) => b.mesh.visible).length, solo];
+  }
+
   dispose() {
     // Geometries are shared with the model library (and other viewports); only materials are owned here.
     for (const v of this.units.values()) {
       v.material.dispose();
       v.split?.geom.dispose();
     }
+    for (const b of this.batches) {
+      b.mesh.geometry.dispose();
+      b.material.dispose();
+      b.maskTex.dispose();
+    }
+    this.batches = [];
+    this.releaseWarmup();
     this.outlineSel.dispose();
     this.outlineHover.dispose();
     this.units.clear();
     this.root.clear();
   }
+}
+
+function modeOpacity(units: UnitView[]): number {
+  const c = new Map<number, number>();
+  let best = 0;
+  let bestN = -1;
+  for (const v of units) {
+    const n = (c.get(v.opacityTarget) ?? 0) + 1;
+    c.set(v.opacityTarget, n);
+    if (n > bestN) {
+      bestN = n;
+      best = v.opacityTarget;
+    }
+  }
+  return best;
+}
+
+function median(a: number[]): number {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y);
+  return s[s.length >> 1]!;
 }

@@ -150,10 +150,112 @@ export function splitMesh(job: SliceJob): SliceResult {
   return { id: job.id, pos: new Float32Array(pos), nrm: nOut, idx: new Uint32Array(out), slab: new Float32Array(slab) };
 }
 
+/** One merged-batch build: units baked to world space with per-vertex tint, fibre axis and unit index. */
+export interface MergeUnit {
+  pos: ArrayBufferView;
+  posNorm: boolean;
+  posSize: number;
+  nrm: ArrayBufferView | null;
+  nrmNorm: boolean;
+  idx: Uint16Array | Uint32Array | null;
+  /** Column-major 4×4 world matrix. */
+  m: number[];
+  color: [number, number, number];
+  axis: [number, number, number];
+}
+export interface MergeJob {
+  kind: 'merge';
+  id: number;
+  units: MergeUnit[];
+}
+export interface MergeResult {
+  id: number;
+  pos: Float32Array;
+  nrm: Int8Array;
+  color: Uint8Array;
+  axis: Int8Array;
+  unit: Uint16Array;
+  idx: Uint32Array;
+}
+
+export function mergeUnits(job: MergeJob): MergeResult {
+  let vTotal = 0;
+  let iTotal = 0;
+  const flat = job.units.map((u) => {
+    const P = toFloat(u.pos, u.posNorm);
+    const vc = P.length / u.posSize;
+    const N = u.nrm ? toFloat(u.nrm, u.nrmNorm) : null;
+    vTotal += vc;
+    iTotal += u.idx ? u.idx.length : vc;
+    return { P, N, vc, ns: N ? N.length / vc : 3 };
+  });
+  const pos = new Float32Array(vTotal * 3);
+  const nrm = new Int8Array(vTotal * 3);
+  const color = new Uint8Array(vTotal * 3);
+  const axis = new Int8Array(vTotal * 3);
+  const unit = new Uint16Array(vTotal);
+  const idx = new Uint32Array(iTotal);
+  let vo = 0;
+  let io = 0;
+  job.units.forEach((u, ui) => {
+    const { P, N, vc, ns } = flat[ui]!;
+    const m = u.m;
+    // Normal matrix = inverse-transpose of the upper 3×3 (handles non-uniform quantisation scale).
+    const a00 = m[0]!, a01 = m[1]!, a02 = m[2]!, a10 = m[4]!, a11 = m[5]!, a12 = m[6]!, a20 = m[8]!, a21 = m[9]!, a22 = m[10]!;
+    const b01 = a22 * a11 - a12 * a21, b11 = -a22 * a10 + a12 * a20, b21 = a21 * a10 - a11 * a20;
+    const det = a00 * b01 + a01 * b11 + a02 * b21 || 1;
+    const inv = [b01, -a22 * a01 + a02 * a21, a12 * a01 - a02 * a11, b11, a22 * a00 - a02 * a20, -a12 * a00 + a02 * a10, b21, -a21 * a00 + a01 * a20, a11 * a00 - a01 * a10].map((x) => x / det);
+    const cr = Math.round(u.color[0] * 255), cg = Math.round(u.color[1] * 255), cb = Math.round(u.color[2] * 255);
+    const ax = Math.round(u.axis[0] * 127), ay = Math.round(u.axis[1] * 127), az = Math.round(u.axis[2] * 127);
+    for (let i = 0; i < vc; i++) {
+      const x = P[i * u.posSize]!, y = P[i * u.posSize + 1]!, z = P[i * u.posSize + 2]!;
+      const o = (vo + i) * 3;
+      pos[o] = m[0]! * x + m[4]! * y + m[8]! * z + m[12]!;
+      pos[o + 1] = m[1]! * x + m[5]! * y + m[9]! * z + m[13]!;
+      pos[o + 2] = m[2]! * x + m[6]! * y + m[10]! * z + m[14]!;
+      let nx = 0, ny = 1, nz = 0;
+      if (N) {
+        const px = N[i * ns]!, py = N[i * ns + 1]!, pz = N[i * ns + 2]!;
+        // inverse-transpose: n' = inv^T n  (inv is row-major of the inverse of the column-major 3×3)
+        nx = inv[0]! * px + inv[1]! * py + inv[2]! * pz;
+        ny = inv[3]! * px + inv[4]! * py + inv[5]! * pz;
+        nz = inv[6]! * px + inv[7]! * py + inv[8]! * pz;
+        const l = Math.hypot(nx, ny, nz) || 1;
+        nx /= l;
+        ny /= l;
+        nz /= l;
+      }
+      nrm[o] = Math.round(nx * 127);
+      nrm[o + 1] = Math.round(ny * 127);
+      nrm[o + 2] = Math.round(nz * 127);
+      color[o] = cr;
+      color[o + 1] = cg;
+      color[o + 2] = cb;
+      axis[o] = ax;
+      axis[o + 1] = ay;
+      axis[o + 2] = az;
+      unit[vo + i] = ui;
+    }
+    if (u.idx) for (let i = 0; i < u.idx.length; i++) idx[io + i] = u.idx[i]! + vo;
+    else for (let i = 0; i < vc; i++) idx[io + i] = vo + i;
+    // Mirrored transforms (negative determinant) flip the winding.
+    if (det < 0) for (let i = io; i < io + (u.idx ? u.idx.length : vc); i += 3) { const t = idx[i + 1]!; idx[i + 1] = idx[i + 2]!; idx[i + 2] = t; }
+    vo += vc;
+    io += u.idx ? u.idx.length : vc;
+  });
+  return { id: job.id, pos, nrm, color, axis, unit, idx };
+}
+
 declare const WorkerGlobalScope: { new (): unknown } | undefined;
 if (typeof WorkerGlobalScope !== 'undefined' && self instanceof (WorkerGlobalScope as unknown as typeof Object)) {
-  self.onmessage = (e: MessageEvent<SliceJob>) => {
-    const r = splitMesh(e.data);
-    (self as unknown as DedicatedWorkerGlobalScope).postMessage(r, [r.pos.buffer, r.nrm.buffer, r.idx.buffer, r.slab.buffer]);
+  self.onmessage = (e: MessageEvent<SliceJob | MergeJob>) => {
+    const scope = self as unknown as DedicatedWorkerGlobalScope;
+    if ((e.data as MergeJob).kind === 'merge') {
+      const r = mergeUnits(e.data as MergeJob);
+      scope.postMessage(r, [r.pos.buffer, r.nrm.buffer, r.color.buffer, r.axis.buffer, r.unit.buffer, r.idx.buffer]);
+    } else {
+      const r = splitMesh(e.data as SliceJob);
+      scope.postMessage(r, [r.pos.buffer, r.nrm.buffer, r.idx.buffer, r.slab.buffer]);
+    }
   };
 }

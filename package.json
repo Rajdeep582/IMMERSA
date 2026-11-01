@@ -1,17 +1,27 @@
 {
   "name": "immersa",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
-  "description": "Immersa — interactive 3D human anatomy explorer (BodyParts3D, CC BY 4.0)",
+  "description": "Immersa \u2014 interactive 3D human anatomy explorer (BodyParts3D, CC BY 4.0)",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:android": "tsc -b && vite build --mode android && cap sync android",
+    "android:apk": "node scripts/android-build.mjs",
+    "android:apk:debug": "node scripts/android-build.mjs --debug",
+    "android:open": "cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/inter": "5.3.0",
+    "@fontsource/inter-tight": "5.3.0",
     "@react-three/fiber": "9.8.2",
     "lucide-react": "1.63.0",
     "react": "19.3.1",
@@ -21,6 +31,7 @@
     "zustand": "5.0.16"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.3",
     "@types/node": "^22.20.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

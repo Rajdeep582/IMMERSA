@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowRight, Box, Lightbulb, Pin, RotateCw, Stethoscope } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowRight, BookA, Box, Flame, Lightbulb, Pin, RotateCw, Stethoscope } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Registry } from '../data/registry';
 import type { QualityProfile } from '../engine/quality';
@@ -37,13 +37,15 @@ function Figure3D({ target, caption, ctx, n }: { target: { male?: string; female
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const rec = ctx.registry ? resolveName(ctx.registry, target[ctx.registry.model]) : undefined;
+  // Mounted only while near the screen: each live figure is a WebGL context, and phones/tablets allow
+  // only a handful at once (exceeding it silently kills the oldest — often the main 3D view).
   useEffect(() => {
     const el = ref.current;
-    if (!el || visible) return;
-    const io = new IntersectionObserver((e) => e.some((x) => x.isIntersecting) && setVisible(true), { rootMargin: '200px' });
+    if (!el) return;
+    const io = new IntersectionObserver((e) => setVisible(e.some((x) => x.isIntersecting)), { rootMargin: '150px 0px' });
     io.observe(el);
     return () => io.disconnect();
-  }, [visible]);
+  }, []);
   return (
     <figure className="lfig" ref={ref}>
       <div className="lfig-view">
@@ -61,6 +63,7 @@ function Figure3D({ target, caption, ctx, n }: { target: { male?: string; female
       </div>
       <figcaption>
         <span className="lfig-no">Fig. {n}</span> {caption}
+        {rec && ctx.registry?.model === 'female' && rec.id === 'sys:skeletal' && <em className="lfig-cov"> The female model contains the vertebral column, pelvis and lower-limb bones only.</em>}
         {rec && (
           <button className="xlink strong" onClick={() => ctx.onLink(rec.id)}>
             Open in 3D explorer <ArrowRight size={13} />
@@ -182,8 +185,8 @@ export function BlockView({ b, ctx }: { b: Block; ctx: BlockCtx }) {
         </div>
       );
     case 'callout': {
-      const Icon = b.tone === 'clinical' ? Stethoscope : b.tone === 'tip' ? Lightbulb : Pin;
-      const title = b.title ?? (b.tone === 'clinical' ? 'Clinical note' : b.tone === 'tip' ? 'Memory aid' : 'Remember');
+      const Icon = b.tone === 'clinical' ? Stethoscope : b.tone === 'tip' ? Lightbulb : b.tone === 'pitfall' ? AlertTriangle : Pin;
+      const title = b.title ?? (b.tone === 'clinical' ? 'Clinical note' : b.tone === 'tip' ? 'Memory aid' : b.tone === 'pitfall' ? 'Commonly confused' : 'Remember');
       return (
         <aside className={`lcall ${b.tone}`}>
           <Icon size={17} aria-hidden />
@@ -200,6 +203,102 @@ export function BlockView({ b, ctx }: { b: Block; ctx: BlockCtx }) {
           {b.items.map(([k, v]) => (
             <div key={k}>
               <dt>{k}</dt>
+              <dd>{R(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      );
+    case 'mnemonic':
+      return (
+        <div className="lmnem" role="group" aria-label={b.title}>
+          <div className="lmnem-h">
+            <Lightbulb size={16} aria-hidden /> <span>{b.title}</span>
+          </div>
+          <div className="lmnem-phrase">“{b.phrase}”</div>
+          <ol className="lmnem-list">
+            {b.items.map(([k, v], i) => (
+              <li key={i} style={{ ['--i' as string]: i }}>
+                <span className="lmnem-k">{k}</span>
+                <span className="lmnem-v">{R(v)}</span>
+              </li>
+            ))}
+          </ol>
+          {b.note && <div className="lmnem-note">{R(b.note)}</div>}
+        </div>
+      );
+    case 'relations': {
+      const S = b.sides;
+      const cell = (k: keyof typeof S, label: string) =>
+        S[k] ? (
+          <div className={`lrel-c lrel-${k}`}>
+            <span className="lrel-dir">{label}</span>
+            <span className="lrel-t">{R(S[k]!)}</span>
+          </div>
+        ) : (
+          <div className={`lrel-c lrel-${k} empty`} />
+        );
+      return (
+        <div className="lrel" role="group" aria-label={b.title}>
+          <div className="ldiag-title">{b.title}</div>
+          <div className="lrel-grid">
+            {cell('superior', 'Superior')}
+            {cell('anterior', 'Anterior')}
+            {cell('medial', 'Medial')}
+            <div className="lrel-center">
+              <span>{b.center}</span>
+            </div>
+            {cell('lateral', 'Lateral')}
+            {cell('posterior', 'Posterior')}
+            {cell('inferior', 'Inferior')}
+          </div>
+        </div>
+      );
+    }
+    case 'compare':
+      return (
+        <div className="lcmp" role="group" aria-label={b.title}>
+          <div className="ldiag-title">{b.title}</div>
+          <div className="lcmp-grid" style={{ ['--n' as string]: b.cols.length }}>
+            <div className="lcmp-corner" />
+            {b.cols.map((c, i) => (
+              <div key={c} className={`lcmp-col c${i}`}>
+                {c}
+              </div>
+            ))}
+            {b.rows.map(([label, ...cells], r) => (
+              <div key={r} className="lcmp-row">
+                <div className="lcmp-label">{label}</div>
+                {cells.map((c, i) => (
+                  <div key={i} className={`lcmp-cell c${i}`} data-col={b.cols[i]}>
+                    {R(c)}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    case 'highyield':
+      return (
+        <div className="lhy">
+          <div className="lhy-h">
+            <Flame size={16} aria-hidden /> {b.title ?? 'High-yield — exam favourites'}
+          </div>
+          <ul>
+            {b.items.map((x, i) => (
+              <li key={i}>{R(x)}</li>
+            ))}
+          </ul>
+        </div>
+      );
+    case 'terms':
+      return (
+        <dl className="lterms">
+          {b.items.map(([k, v]) => (
+            <div key={k}>
+              <dt>
+                <BookA size={13} aria-hidden /> {k}
+              </dt>
               <dd>{R(v)}</dd>
             </div>
           ))}

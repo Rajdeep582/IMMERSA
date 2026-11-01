@@ -32,7 +32,11 @@ Other scripts: `npm run build` (typecheck + production build), `npm run preview`
 | Learn pages | `#/learn` hub + 23 study guides (12 systems + brain, spinal cord, cranial nerves, spinal nerves & plexuses, autonomic NS, vertebral column, skull, heart, stomach, liver/pancreas, intestines). Fixed order: what & where → structure → function → clinical → key points → self-test → references. Live isolated 3D figure, diagrams (flows, trees, layers, tables), keyword highlighting, structure links into 3D, text size, light/dark reading theme (`src/learn/`) |
 | Study card | Selecting any structure shows an isolated 3D view plus a structured card (location, structure, function, clinical, key points, nerve/blood supply) and a link to its guide. ~130 hand-written cards (all major nerves, key organs) + earlier curated entries; every other structure gets a card assembled from the hierarchy and labelled as such |
 | Nervous system | Brain, spinal cord (male: Z-Anatomy white matter, horns, tracts, spinal ganglia, dura), cranial nerves I–XII, phrenic nerves (C3–C5), brachial / lumbar / sacral plexuses with named branches to the digits, intercostal nerves, sympathetic trunks with ganglia, spinal roots and cauda equina — in both models. Colour-coded: cranial amber, spinal/plexus yellow, sympathetic green |
-| Adaptive quality | Device tiering + runtime DPR controller, demand-driven rendering (no frames when idle) |
+| Adaptive quality | Device tiering (iPad detected via touch-Mac UA, Apple GPUs → high tier), demand-driven rendering (no frames when idle) |
+| Draw-call batching | Units merged per system + material in a worker (`mergeUnits`); per-unit mask texture drops units that are selected / hovered / sliced / fading, which then draw on their own. ~1,000 → ~50 draw calls, CPU render ~40 → ~7 ms. Disable with `?batch=0` |
+| Sharp rendering | Adaptive DPR only while moving (floor ≥ 1×); 160 ms after interaction stops the frame re-renders at full device DPR (up to 2×) |
+| Loading | Priority queue (skin → skeleton → nerves → organs → vessels/muscle), concurrency per tier, selected/isolated systems jump the queue; shader variants precompiled (`compileAsync`) during download; BVH built in idle time; meshopt decode on worker pool sized to CPU cores |
+| Offline cache | Service worker (`public/sw.js`, production only) caches models / data / assets cache-first, versioned per build — repeat visits load from disk |
 
 ## Data pipeline
 

@@ -1,6 +1,20 @@
 import * as THREE from 'three';
 import { cores } from './threads';
-import type { SliceJob, SliceResult } from './sliceWorker';
+import type { MergeJob, MergeResult, MergeUnit, SliceJob, SliceResult } from './sliceWorker';
+
+/** Copy of an attribute's data suitable for transfer to a worker. */
+export function flatAttr(a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute): { arr: ArrayBufferView; norm: boolean; size: number } {
+  if (a instanceof THREE.InterleavedBufferAttribute) {
+    const out = new Float32Array(a.count * 3);
+    for (let i = 0; i < a.count; i++) {
+      out[i * 3] = a.getX(i);
+      out[i * 3 + 1] = a.getY(i);
+      out[i * 3 + 2] = a.getZ(i);
+    }
+    return { arr: out, norm: false, size: 3 };
+  }
+  return { arr: (a.array as unknown as { slice(): ArrayBufferView }).slice(), norm: a.normalized, size: a.itemSize };
+}
 
 /**
  * Pool of slice workers (one per spare CPU core). Geometry is cut off the main thread so the
@@ -9,8 +23,10 @@ import type { SliceJob, SliceResult } from './sliceWorker';
 class SliceSplitter {
   private workers: Worker[] = [];
   private idle: Worker[] = [];
-  private queue: { job: SliceJob; transfer: Transferable[]; resolve: (r: SliceResult) => void; reject: (e: unknown) => void }[] = [];
-  private pending = new Map<number, { resolve: (r: SliceResult) => void; reject: (e: unknown) => void }>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private queue: { job: SliceJob | MergeJob; transfer: Transferable[]; resolve: (r: any) => void; reject: (e: unknown) => void; prio: boolean }[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private pending = new Map<number, { resolve: (r: any) => void; reject: (e: unknown) => void }>();
   private seq = 0;
   private failed = false;
 
@@ -20,7 +36,7 @@ class SliceSplitter {
     try {
       for (let i = 0; i < n; i++) {
         const w = new Worker(new URL('./sliceWorker.ts', import.meta.url), { type: 'module', name: `slice-${i}` });
-        w.onmessage = (e: MessageEvent<SliceResult>) => {
+        w.onmessage = (e: MessageEvent<SliceResult | MergeResult>) => {
           const p = this.pending.get(e.data.id);
           this.pending.delete(e.data.id);
           this.idle.push(w);
@@ -51,10 +67,28 @@ class SliceSplitter {
     }
   }
 
-  /** Cancel queued (not yet started) jobs, e.g. when the slab layout changes. */
+  /** Cancel queued (not yet started) slice jobs, e.g. when the slab layout changes. */
   clearQueue() {
-    for (const q of this.queue) q.reject(new Error('cancelled'));
-    this.queue = [];
+    const keep = this.queue.filter((q) => (q.job as MergeJob).kind === 'merge');
+    for (const q of this.queue) if (!keep.includes(q)) q.reject(new Error('cancelled'));
+    this.queue = keep;
+  }
+
+  /** Merge units into one batch geometry on a worker (see mergeUnits). Merges run before slicing. */
+  merge(units: MergeUnit[]): Promise<MergeResult> {
+    this.ensure();
+    if (this.failed) return Promise.reject(new Error('workers unavailable'));
+    const job: MergeJob = { kind: 'merge', id: ++this.seq, units };
+    const transfer: Transferable[] = [];
+    for (const u of units) {
+      transfer.push((u.pos as Float32Array).buffer);
+      if (u.nrm) transfer.push((u.nrm as Float32Array).buffer);
+      if (u.idx) transfer.push(u.idx.buffer);
+    }
+    return new Promise<MergeResult>((resolve, reject) => {
+      this.queue.unshift({ job, transfer, resolve, reject, prio: true });
+      this.pump();
+    });
   }
 
   split(geometry: THREE.BufferGeometry, matrixWorld: THREE.Matrix4, layout: { y0: number; h: number; n: number }): Promise<THREE.BufferGeometry> {
@@ -62,20 +96,8 @@ class SliceSplitter {
     if (this.failed) return Promise.reject(new Error('workers unavailable'));
     const pa = geometry.getAttribute('position') as THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
     const na = geometry.getAttribute('normal') as THREE.BufferAttribute | THREE.InterleavedBufferAttribute | undefined;
-    const flat = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute): { arr: ArrayBufferView; norm: boolean; size: number } => {
-      if (a instanceof THREE.InterleavedBufferAttribute) {
-        const out = new Float32Array(a.count * 3);
-        for (let i = 0; i < a.count; i++) {
-          out[i * 3] = a.getX(i);
-          out[i * 3 + 1] = a.getY(i);
-          out[i * 3 + 2] = a.getZ(i);
-        }
-        return { arr: out, norm: false, size: 3 };
-      }
-      return { arr: (a.array as unknown as { slice(): ArrayBufferView }).slice(), norm: a.normalized, size: a.itemSize };
-    };
-    const p = flat(pa);
-    const nn = na ? flat(na) : null;
+    const p = flatAttr(pa);
+    const nn = na ? flatAttr(na) : null;
     const idx = geometry.index ? ((geometry.index.array as Uint16Array | Uint32Array).slice() as Uint16Array | Uint32Array) : null;
     const e = matrixWorld.elements;
     const job: SliceJob = {
@@ -93,7 +115,7 @@ class SliceSplitter {
     if (nn) transfer.push((nn.arr as Float32Array).buffer);
     if (idx) transfer.push(idx.buffer);
     return new Promise<SliceResult>((resolve, reject) => {
-      this.queue.push({ job, transfer, resolve, reject });
+      this.queue.push({ job, transfer, resolve, reject, prio: false });
       this.pump();
     }).then((r) => {
       const g = new THREE.BufferGeometry();

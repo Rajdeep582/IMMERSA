@@ -78,13 +78,13 @@ function GroundGlow() {
 
 function SceneDriver({ registry, quality }: { registry: Registry; quality: QualityProfile }) {
   const { gl, camera, scene, invalidate, size, setDpr } = useThree();
-  const anat = useMemo(() => new AnatomyScene(registry, quality.tier), [registry, quality.tier]);
+  const anat = useMemo(() => new AnatomyScene(registry, quality.tier, { batch: !/[?&]batch=0/.test(location.search) }), [registry, quality.tier]);
   const library = useMemo(() => libraryFor(registry.model), [registry]);
   const rigRef = useRef<CameraRig | null>(null);
   const hiRef = useRef<HiLodController | null>(null);
   const drill = useRef<{ x: number; y: number; t: number; stack: string[]; idx: number }>({ x: 0, y: 0, t: 0, stack: [], idx: 0 });
   const offset = useRef({ cur: 0, goal: 0, curY: 0, goalY: 0, lastCheck: 0 });
-  const perf = useRef({ ema: 1 / 60, slowFor: 0, fastFor: 0, dpr: quality.maxDpr, frames: 0, acc: 0, lastStat: 0 });
+  const perf = useRef({ ema: 1 / 60, slowFor: 0, fastFor: 0, dpr: quality.maxDpr, motionDpr: quality.maxDpr, lastMove: 0, frames: 0, acc: 0, lastStat: 0 });
 
   // --- scene, rig, input wiring (once) ---
   useEffect(() => {
@@ -197,7 +197,10 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
         invalidate();
       },
     });
-    const kick = () => invalidate();
+    // Plain mouse hovering needs no frame (hover changes redraw through the store); drags and touches do.
+    const kick = (e: PointerEvent | WheelEvent) => {
+      if (!(e instanceof PointerEvent) || e.buttons !== 0 || e.pointerType !== 'mouse') invalidate();
+    };
     el.addEventListener('pointermove', kick);
     el.addEventListener('wheel', kick, { passive: true });
 
@@ -245,12 +248,46 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
   useEffect(() => {
     const manifest = registry.manifest;
     let arrived = false;
-    const load = (sys: SystemId) => {
+    // Start-up scheduler: a few systems download/decode at a time, silhouette first, so the first
+    // complete frame appears quickly and low-end devices are not flooded with parallel decodes.
+    const PRIORITY: SystemId[] = ['integumentary', 'skeletal', 'nervous', 'digestive', 'respiratory', 'urinary', 'reproductive', 'sensory', 'lymphatic', 'endocrine', 'cardiovascular', 'muscular'];
+    const waiting = new Set<SystemId>();
+    let active = 0;
+    let disposed = false;
+    const pump = () => {
+      while (!disposed && active < quality.loadConcurrency && waiting.size) {
+        const next = PRIORITY.find((x) => waiting.has(x)) ?? [...waiting][0]!;
+        waiting.delete(next);
+        active++;
+        start(next);
+      }
+    };
+    const load = (sys: SystemId, urgent = false) => {
       const m = manifest.systems[sys];
       const st = useApp.getState();
       if (st.bodyModel !== registry.model) return; // this viewport is being replaced
-      if (!m || st.systemStatus[sys] === 'loading' || st.systemStatus[sys] === 'ready') return;
+      if (!m) return;
+      if (waiting.has(sys)) {
+        // Queued but now needed right away (selected / isolated): jump the queue.
+        if (urgent) {
+          waiting.delete(sys);
+          active++;
+          start(sys);
+        }
+        return;
+      }
+      if (st.systemStatus[sys] === 'loading' || st.systemStatus[sys] === 'ready') return;
       st.setSystemStatus(sys, 'loading');
+      if (urgent) {
+        active++;
+        start(sys);
+      } else {
+        waiting.add(sys);
+        pump();
+      }
+    };
+    const start = (sys: SystemId) => {
+      const m = manifest.systems[sys]!;
       library
         .loadSystem(sys, m.file)
         .then((units) => {
@@ -260,7 +297,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
           useApp.getState().setSystemStatus(sys, 'ready');
           // Compile new shader programs in parallel (KHR_parallel_shader_compile) and warm picking BVHs in idle time.
           gl.compileAsync(scene, camera).then(() => invalidate()).catch(() => undefined);
-          anat.warmBvh();
+          if (quality.tier !== 'low') anat.warmBvh();
           if (!arrived) {
             arrived = true;
             if (!viewer.resumedFromSwitch) rigRef.current?.flyTo(HOME_POSE, { duration: 2.1, arc: false });
@@ -270,6 +307,10 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
         .catch((e: unknown) => {
           console.error(e);
           if (useApp.getState().bodyModel === registry.model) useApp.getState().setSystemStatus(sys, 'error');
+        })
+        .finally(() => {
+          active--;
+          pump();
         });
     };
     const needed = (s: ReturnType<typeof useApp.getState>) => {
@@ -279,9 +320,12 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
           (s.opacity[meta.id] ?? 0) > 0 ||
           (s.selectedId && registry.get(s.selectedId)?.system === meta.id) ||
           (s.isolate && registry.get(s.isolate.id)?.system === meta.id);
-        if (want) load(meta.id);
+        const urgent = !!((s.selectedId && registry.get(s.selectedId)?.system === meta.id) || (s.isolate && registry.get(s.isolate.id)?.system === meta.id));
+        if (want) load(meta.id, urgent);
       }
     };
+    // Compile shader variants while the meshes download.
+    anat.prewarm(gl, scene, camera).then(() => invalidate());
     // Skin and skeleton first: they define the silhouette.
     load('integumentary');
     load('skeletal');
@@ -297,6 +341,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
       }, 3500);
     }
     return () => {
+      disposed = true;
       unsub();
       clearTimeout(timer);
     };
@@ -366,28 +411,40 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
     for (const fn of viewer.frameListeners) fn(cam);
     if (a || b || hiRef.current?.loading) invalidate();
 
-    // Adaptive resolution: only judge frames rendered back-to-back.
+    // Resolution policy: frames drawn while the view moves use an adaptive resolution (never below one
+    // device-independent pixel per CSS pixel); once everything settles, one sharp frame is drawn at the
+    // device's full quality resolution, so a still image is never blurry.
     const p = perf.current;
-    if (dt < 0.25) {
-      p.ema = p.ema * 0.9 + dt * 0.1;
-      if (p.ema > 1 / 38) {
-        p.slowFor += dt;
-        p.fastFor = 0;
-      } else if (p.ema < 1 / 57) {
-        p.fastFor += dt;
-        p.slowFor = 0;
-      } else {
-        p.slowFor = p.fastFor = 0;
+    const moving = a || b || !!hiRef.current?.loading;
+    if (moving) {
+      p.lastMove = performance.now();
+      if (dt < 0.25) {
+        p.ema = p.ema * 0.9 + dt * 0.1;
+        if (p.ema > 1 / 40) {
+          p.slowFor += dt;
+          p.fastFor = 0;
+        } else if (p.ema < 1 / 56) {
+          p.fastFor += dt;
+          p.slowFor = 0;
+        } else p.slowFor = p.fastFor = 0;
+        if (p.slowFor > 0.5 && p.motionDpr > quality.minDpr) {
+          p.motionDpr = Math.max(quality.minDpr, +(p.motionDpr - 0.25).toFixed(2));
+          p.slowFor = 0;
+        } else if (p.fastFor > 2 && p.motionDpr < quality.maxDpr) {
+          p.motionDpr = Math.min(quality.maxDpr, +(p.motionDpr + 0.25).toFixed(2));
+          p.fastFor = 0;
+        }
       }
-      if (p.slowFor > 1.2 && p.dpr > quality.minDpr) {
-        p.dpr = Math.max(quality.minDpr, +(p.dpr - 0.25).toFixed(2));
+      if (p.dpr !== p.motionDpr) {
+        p.dpr = p.motionDpr;
         setDpr(p.dpr);
-        p.slowFor = 0;
-      } else if (p.fastFor > 3 && p.dpr < quality.maxDpr) {
-        p.dpr = Math.min(quality.maxDpr, +(p.dpr + 0.25).toFixed(2));
-        setDpr(p.dpr);
-        p.fastFor = 0;
       }
+    } else if (p.dpr < quality.maxDpr) {
+      if (performance.now() - p.lastMove > 160) {
+        p.dpr = quality.maxDpr;
+        setDpr(p.dpr);
+        invalidate();
+      } else invalidate();
     }
     p.frames++;
     p.acc += dt;
@@ -413,15 +470,20 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
   return null;
 }
 
-export function MainViewport({ registry, quality }: { registry: Registry; quality: QualityProfile }) {
+export function MainViewport({ registry, quality, paused = false }: { registry: Registry; quality: QualityProfile; paused?: boolean }) {
+  // Hidden under the Learn page: stop drawing entirely (GPU/battery), resume with one frame.
+  useEffect(() => {
+    if (!paused) for (const t of [0, 60, 250]) window.setTimeout(() => viewer.invalidate(), t);
+  }, [paused]);
   return (
     <div className="viewport" aria-label="3D anatomy viewport. Drag to rotate, scroll or pinch to zoom toward the pointer, right-drag or two fingers to pan.">
       <Canvas
-        frameloop="demand"
+        frameloop={paused ? 'never' : 'demand'}
         dpr={quality.maxDpr}
         gl={{ antialias: quality.antialias, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: false, stencil: false, depth: true, failIfMajorPerformanceCaveat: false }}
         camera={{ fov: 30, near: 0.01, far: 20, position: [0, 0, 3] }}
-        onCreated={({ gl }) => {
+        onCreated={({ gl, scene, camera }) => {
+          viewer.debug = { gl, scene, camera };
           gl.setClearColor(0x000000, 0);
           // Neutral tone mapping keeps tissue hues saturated (ACES desaturates bright reds/yellows).
           gl.toneMapping = THREE.NeutralToneMapping;

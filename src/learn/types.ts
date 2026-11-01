@@ -28,7 +28,17 @@ export type Block =
   | { t: 'tree'; title: string; root: TreeNode }
   | { t: 'layers'; title: string; layers: { name: string; note: Rich }[] }
   | { t: 'table'; title?: string; head: string[]; rows: Rich[][] }
-  | { t: 'callout'; tone: 'remember' | 'clinical' | 'tip'; title?: string; text: Rich }
+  | { t: 'callout'; tone: 'remember' | 'clinical' | 'tip' | 'pitfall'; title?: string; text: Rich }
+  /** Memory aid: each letter of a phrase mapped to what it stands for. */
+  | { t: 'mnemonic'; title: string; phrase: string; items: [string, Rich][]; note?: Rich }
+  /** Relations "compass": what lies on each side of a structure. */
+  | { t: 'relations'; title: string; center: string; sides: Partial<Record<'anterior' | 'posterior' | 'superior' | 'inferior' | 'medial' | 'lateral', Rich>> }
+  /** Side-by-side comparison of two (or three) commonly confused things. */
+  | { t: 'compare'; title: string; cols: string[]; rows: [string, ...Rich[]][] }
+  /** Exam favourites: the facts most often asked. */
+  | { t: 'highyield'; title?: string; items: Rich[] }
+  /** Key terminology with short definitions. */
+  | { t: 'terms'; items: [string, Rich][] }
   | { t: 'facts'; items: [string, Rich][] }
   | { t: 'figure'; caption: string; target: { male?: string; female?: string } };
 
