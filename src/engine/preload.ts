@@ -4,17 +4,17 @@ import type { BodyModel } from '../data/types';
 import { libraryFor } from './models';
 import type { QualityTier } from '../state/store';
 
-const started = new Set<BodyModel>();
+const started = new Map<BodyModel, Promise<void>>();
 
 /**
  * Fetch and decode the other body model in the background (one system at a time, idle priority),
  * so switching male ⇄ female is instant. Low-end devices only preload the core systems.
  */
-export function preloadModel(model: BodyModel, tier: QualityTier) {
-  if (started.has(model)) return;
-  started.add(model);
+export function preloadModel(model: BodyModel, tier: QualityTier): Promise<void> {
+  const hit = started.get(model);
+  if (hit) return hit;
   const core = new Set(['integumentary', 'skeletal', 'nervous', 'digestive', 'respiratory']);
-  loadRegistry(model)
+  const p = loadRegistry(model)
     .then(async (reg) => {
       const lib = libraryFor(model);
       const order = ['integumentary', 'skeletal', 'nervous', 'cardiovascular', 'muscular', 'digestive', 'respiratory', 'urinary', 'reproductive', 'endocrine', 'lymphatic', 'sensory'];
@@ -27,7 +27,11 @@ export function preloadModel(model: BodyModel, tier: QualityTier) {
         await lib.loadSystem(sys, m.file).catch(() => undefined);
       }
     })
-    .catch(() => started.delete(model));
+    .catch(() => {
+      started.delete(model);
+    });
+  started.set(model, p);
+  return p;
 }
 
 const idle = () =>

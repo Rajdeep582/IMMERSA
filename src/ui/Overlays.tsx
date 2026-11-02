@@ -1,5 +1,5 @@
 import { Loader2, X } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Registry } from '../data/registry';
 import { viewer } from '../engine/viewer';
@@ -57,6 +57,7 @@ export function HintToast() {
 }
 
 let everReady = false;
+let warmStarted = false;
 
 declare global {
   interface Window {
@@ -82,19 +83,40 @@ export function LoadingVeil() {
   // The intro stays until every start-up system has arrived, so the first view is complete.
   const eagerIds = SYSTEMS.filter((m) => m.eager).map((m) => m.id);
   const settled = eagerIds.filter((id) => status[id] === 'ready' || status[id] === 'error').length;
-  const first = everReady || (status.skeletal === 'ready' && settled >= eagerIds.length);
+  const batchPending = useApp((s) => s.batchPending);
+  // ...and until the merged draw batches exist, so the first interaction is already at full speed.
+  const first = everReady || (status.skeletal === 'ready' && settled >= eagerIds.length && batchPending === 0);
   if (first) everReady = true;
   const hiRes = useApp((s) => s.hiResRegion);
   useEffect(() => {
     const intro = window.__intro;
-    if (!intro) return;
-    if (first) return intro.done();
+    if (!intro) {
+      if (first) useApp.setState({ introActive: false });
+      return;
+    }
+    if (first) {
+      if (warmStarted) return;
+      warmStarted = true;
+      // Upload the finished scene to the GPU behind the intro, then lift it.
+      intro.progress(0.995, 'Preparing the 3D view');
+      (viewer.warmUpload?.() ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() => {
+          window.__intro?.done();
+          useApp.setState({ introActive: false });
+        });
+      return;
+    }
     const f = 0.06 + 0.9 * Math.min(1, (settled + 0.25 * loading.length) / eagerIds.length);
-    intro.progress(f, loading.length ? (STAGE[loading[0]!] ?? 'Loading anatomy') : 'Loading anatomy data');
-  }, [first, status, loading.length, settled, eagerIds.length]);
+    if (settled >= eagerIds.length) intro.progress(Math.min(0.99, 0.96 + 0.03 / (1 + batchPending)), 'Optimising for your device');
+    else intro.progress(f, loading.length ? (STAGE[loading[0]!] ?? 'Loading anatomy') : 'Loading anatomy data');
+  }, [first, status, loading.length, settled, eagerIds.length, batchPending]);
   useEffect(() => {
     // Never leave the intro up if something stalls.
-    const t = window.setTimeout(() => window.__intro?.done(), 45000);
+    const t = window.setTimeout(() => {
+      window.__intro?.done();
+      useApp.setState({ introActive: false });
+    }, 45000);
     return () => clearTimeout(t);
   }, []);
   return (
@@ -187,6 +209,23 @@ export function SelectionPin({ registry }: { registry: Registry }) {
       <button className="pin-label" onClick={() => viewer.focus(rec.id)} title="Fly to this structure">
         {rec.name}
         {parent && parent.kind !== 'system' && <span className="muted">{parent.name}</span>}
+      </button>
+    </div>
+  );
+}
+
+/** Notice over the female model: the free source data is partial; a complete female body is planned. */
+export function FemaleNotice() {
+  const female = useApp((s) => s.bodyModel === 'female');
+  const guided = useApp((s) => s.guided);
+  const [hidden, setHidden] = useState(false);
+  if (!female || guided || hidden) return null;
+  return (
+    <div className="female-note" role="note">
+      <span className="fn-badge">Female model · partial</span>
+      <span className="fn-text">No free or affordable complete female anatomy model is available yet, so some parts (arm bones, nerves, muscles) are missing. A complete female body is coming in a future update.</span>
+      <button className="icon-btn xs ghost" onClick={() => setHidden(true)} aria-label="Dismiss note">
+        <X size={13} />
       </button>
     </div>
   );

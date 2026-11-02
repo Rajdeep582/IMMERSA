@@ -28,6 +28,7 @@ interface DriverProps {
   viewCmd: { id: string; n: number };
   onDetail: (d: DetailState) => void;
   panRef: React.MutableRefObject<boolean>;
+  gateRef: React.MutableRefObject<(e: WheelEvent) => boolean>;
 }
 
 function allOpaque(): SystemOpacity {
@@ -36,7 +37,7 @@ function allOpaque(): SystemOpacity {
   return o;
 }
 
-function InspectDriver({ registry, targetId, quality, context, wireframe, viewCmd, onDetail, panRef }: DriverProps) {
+function InspectDriver({ registry, targetId, quality, context, wireframe, viewCmd, onDetail, panRef, gateRef }: DriverProps) {
   const { gl, camera, scene, invalidate } = useThree();
   const anatRef = useRef<AnatomyScene | null>(null);
   const rigRef = useRef<CameraRig | null>(null);
@@ -73,6 +74,7 @@ function InspectDriver({ registry, targetId, quality, context, wireframe, viewCm
     };
     const input = new RigInput(el, rig, {
       panMode: () => panRef.current,
+      wheelGate: (e) => gateRef.current(e),
       pick: (x, y) => pickAt(x, y, 0)?.point ?? null,
       onTap: (x, y, type) => {
         const h = pickAt(x, y, type === 'touch' ? 12 : 4);
@@ -265,6 +267,39 @@ export function InspectViewport({ registry, targetId, quality }: { registry: Reg
     const t = window.setTimeout(() => setViewCmd((v) => ({ id: 'reset', n: v.n + 1 })), 120);
     return () => clearTimeout(t);
   }, [full]);
+  // Embedded in a scrolling page (Learn): the wheel scrolls the page until the view is engaged (click/tap
+  // on it) or the gesture is a pinch (ctrl+wheel); touch scrolls vertically until engaged.
+  const [engaged, setEngaged] = useState(false);
+  const engagedRef = useRef(false);
+  engagedRef.current = engaged;
+  const fullRef = useRef(full);
+  fullRef.current = full;
+  const [hint, setHint] = useState(false);
+  const hintT = useRef(0);
+  const gateRef = useRef<(e: WheelEvent) => boolean>(() => true);
+  gateRef.current = (e) => {
+    if (fullRef.current !== 'off' || e.ctrlKey || engagedRef.current) return true;
+    if (!boxRef.current?.closest('.learn')) return true;
+    setHint(true);
+    clearTimeout(hintT.current);
+    hintT.current = window.setTimeout(() => setHint(false), 1400);
+    return false;
+  };
+  useEffect(() => () => clearTimeout(hintT.current), []);
+  useEffect(() => {
+    if (!engaged) return;
+    const box = boxRef.current;
+    const out = (e: PointerEvent) => {
+      if (!box || !box.contains(e.target as Node)) setEngaged(false);
+    };
+    const leave = (e: PointerEvent) => e.pointerType === 'mouse' && setEngaged(false);
+    document.addEventListener('pointerdown', out, true);
+    box?.addEventListener('pointerleave', leave);
+    return () => {
+      document.removeEventListener('pointerdown', out, true);
+      box?.removeEventListener('pointerleave', leave);
+    };
+  }, [engaged]);
   const rec = registry.get(targetId);
   const view = (id: string) => setViewCmd((v) => ({ id, n: v.n + 1 }));
   const dpr = useMemo(() => Math.min(quality.maxDpr, 2), [quality.maxDpr]);
@@ -279,14 +314,15 @@ export function InspectViewport({ registry, targetId, quality }: { registry: Reg
           : 'Body-view mesh (simplified)';
   return (
     <div className="inspect">
-      <div ref={boxRef} className={`inspect-canvas ${full !== 'off' ? 'is-full' : ''} ${full === 'overlay' ? 'overlay-full' : ''}`} title="Independent inspection view: drag to rotate, scroll or pinch to zoom, right-drag to pan">
+      <div ref={boxRef} onPointerDownCapture={() => !engaged && setEngaged(true)} className={`inspect-canvas ${full !== 'off' ? 'is-full' : ''} ${full === 'overlay' ? 'overlay-full' : ''} ${engaged ? 'engaged' : ''}`} title="Independent inspection view: drag to rotate, scroll or pinch to zoom, right-drag to pan">
         {full !== 'off' && <div className="inspect-title">{rec.name}</div>}
-        <Canvas frameloop="demand" dpr={dpr} gl={{ antialias: true, alpha: true, toneMapping: THREE.NeutralToneMapping }} camera={{ fov: 28, near: 0.001, far: 10, position: [0, 0, 1] }}>
+        <Canvas frameloop="demand" resize={{ scroll: false }} dpr={dpr} gl={{ antialias: true, alpha: true, toneMapping: THREE.NeutralToneMapping }} camera={{ fov: 28, near: 0.001, far: 10, position: [0, 0, 1] }}>
           <hemisphereLight args={['#eef2f7', '#2a2522', 0.6]} />
           <directionalLight position={[1.5, 2.5, 2.2]} intensity={1.5} />
           <directionalLight position={[-2, 0.6, -1.6]} intensity={0.6} color="#d6e4ff" />
-          <InspectDriver registry={registry} targetId={targetId} quality={quality} context={context} wireframe={wire} viewCmd={viewCmd} onDetail={setDetail} panRef={panRef} />
+          <InspectDriver registry={registry} targetId={targetId} quality={quality} context={context} wireframe={wire} viewCmd={viewCmd} onDetail={setDetail} panRef={panRef} gateRef={gateRef} />
         </Canvas>
+        {hint && <div className="inspect-hint">Click the model to zoom · or Ctrl + scroll</div>}
         <div className={`inspect-badge ${detail.kind}`} title="Triangle count of the selected structure as displayed">
           {badge}
           {detail.tris > 0 && <span className="mono"> · {detail.tris.toLocaleString()} tris</span>}
@@ -295,11 +331,6 @@ export function InspectViewport({ registry, targetId, quality }: { registry: Reg
           <button className="icon-btn sm" onClick={() => view('reset')} aria-label="Reset inspector view" title="Reset view">
             <RotateCcw size={14} />
           </button>
-          {(['anterior', 'posterior', 'left', 'right', 'superior'] as const).map((v) => (
-            <button key={v} className="chip sm" onClick={() => view(v)} title={`${v} view`}>
-              {v === 'anterior' ? 'Ant' : v === 'posterior' ? 'Post' : v === 'left' ? 'L' : v === 'right' ? 'R' : 'Sup'}
-            </button>
-          ))}
           <span className="tools-gap" />
           <button className={`icon-btn sm ${pan ? 'on' : ''}`} onClick={() => setPan((p) => !p)} aria-pressed={pan} aria-label="Pan mode" title="Pan mode: drag moves the structure in any direction">
             <Hand size={14} />

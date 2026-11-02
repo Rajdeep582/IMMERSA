@@ -487,9 +487,9 @@ export function LearnPage({ topicId, section, focusId, registry, quality, switch
         <button className="lbtn ghost" onClick={openExplorer} title="Go to the 3D explorer">
           <Box size={16} /> <span className="hide-xs">3D explorer</span>
         </button>
-        <nav className="lcrumbs" aria-label="Breadcrumb">
-          <button onClick={() => openLearn(null)} className={!topic ? 'on' : ''}>
-            <GraduationCap size={15} /> Learn
+        <nav className={`lcrumbs ${topic ? 'has-topic' : ''}`} aria-label="Breadcrumb">
+          <button onClick={() => openLearn(null)} className={!topic ? 'on' : ''} aria-label="Learn home">
+            <GraduationCap size={15} /> <span className="lc-txt">Learn</span>
           </button>
           {topic?.parent && TOPIC_BY_ID.get(topic.parent) && (
             <span className="hide-xs">

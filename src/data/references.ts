@@ -16,7 +16,7 @@ export const sp = (topic: string): Reference => ({
 });
 
 export const ZANATOMY: Reference = {
-  label: 'Z-Anatomy, the libre 3D atlas of anatomy (peripheral nerves), CC BY-SA 4.0',
+  label: 'Z-Anatomy, the libre 3D atlas of anatomy (peripheral nerves, muscles), CC BY-SA 4.0',
   url: 'https://github.com/Z-Anatomy/Models-of-human-anatomy',
 };
 
@@ -47,7 +47,7 @@ export const SOURCES = [
     name: 'HRA 3D Reference Object Library v1.2–v1.4 (Visible Human Female)',
     by: 'HuBMAP Human Reference Atlas (HRA) consortium',
     license: 'CC BY 4.0',
-    use: '882 female meshes in one registered body frame: reproductive organs, mammary glands, brain (Allen atlas parcellation), spinal cord segments, vertebrae, pelvis, knee region, organs, eyes, vessels. Node labels and UBERON/FMA ids from the HRA ASCT+B ↔ 3D crosswalk (v2.0). Re-centred, simplified for the body view, meshopt-compressed.',
+    use: '882 female meshes in one registered body frame: reproductive organs, mammary glands, brain (Allen atlas parcellation), spinal cord segments, vertebrae, pelvis, knee region, organs, eyes, vessels. Node labels and UBERON/FMA ids from the HRA ASCT+B ↔ 3D crosswalk (v2.0). Re-centred and meshopt-compressed; shown exactly as published (no simplification, nothing added from the male body).',
     attribution: '"3D Reference Object Library, HuBMAP Human Reference Atlas" — https://humanatlas.io',
     url: 'https://github.com/hubmapconsortium/ccf-3d-reference-object-library',
   },
@@ -61,11 +61,20 @@ export const SOURCES = [
     url: 'https://dbarchive.biosciencedbc.jp/en/bodyparts3d/download.html',
   },
   {
-    model: 'both',
+    model: 'male',
     name: 'Z-Anatomy (Startup.blend, peripheral nervous system collection)',
     by: 'Lluís Vinent / Z-Anatomy, built on BodyParts3D',
     license: 'CC BY-SA 4.0 — the derived nerve meshes (models/*/nervous.glb nerve nodes and the peripheral-nervous-system hi chunks) are shared under the same licence',
-    use: '~250 peripheral nerve paths: cranial nerves, brachial and lumbosacral plexuses with their named branches, intercostal nerves, sympathetic trunk, spinal roots and cauda equina. Curves converted to tube meshes, registered to the male skeleton (thin-plate spline on 64 bone landmarks) and warped to the female body (spline on ~500 shared organ, vertebra, pelvis, limb-bone and skin landmarks), then thickened by 0.5 mm toward real nerve calibre.',
+    use: '~250 peripheral nerve paths: cranial nerves, brachial and lumbosacral plexuses with their named branches, intercostal nerves, sympathetic trunk, spinal roots and cauda equina. Curves converted to tube meshes, registered to the male skeleton (thin-plate spline on 64 bone landmarks), then thickened by 0.5 mm toward real nerve calibre. Male body only.',
+    attribution: '"Z-Anatomy — The libre 3D atlas of anatomy — CC BY-SA 4.0" (models derived from "BodyParts3D, DBCLS")',
+    url: 'https://github.com/Z-Anatomy/Models-of-human-anatomy',
+  },
+  {
+    model: 'male',
+    name: 'Z-Anatomy (Startup.blend, muscular system collection)',
+    by: 'Lluís Vinent / Z-Anatomy, built on BodyParts3D',
+    license: 'CC BY-SA 4.0 — the derived muscle meshes (muscular.glb "ZM_" nodes and the muscular__za-* hi chunks) are shared under the same licence',
+    use: 'Male: the ~130 muscles BodyParts3D lacks (facial muscles, masseter, temporalis, abdominal wall, latissimus dorsi, deep back and neck muscles, retinacula), registered to the male frame with a smooth landmark correction. Fasciae and bursae are excluded.',
     attribution: '"Z-Anatomy — The libre 3D atlas of anatomy — CC BY-SA 4.0" (models derived from "BodyParts3D, DBCLS")',
     url: 'https://github.com/Z-Anatomy/Models-of-human-anatomy',
   },

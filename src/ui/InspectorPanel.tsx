@@ -1,4 +1,4 @@
-import { Activity, Box, ChevronRight, Crosshair, Droplet, Eye, EyeOff, FlipHorizontal2, GraduationCap, Info, Layers2, Layers3, MapPin, MessageCircleQuestion, Shrink, Star, Stethoscope, Target, X, Zap } from 'lucide-react';
+import { Activity, Box, Crosshair, Droplet, Eye, EyeOff, FlipHorizontal2, Info, Layers2, Layers3, MapPin, MessageCircleQuestion, Shrink, Star, Stethoscope, Target, X, Zap } from 'lucide-react';
 import { openMurphy } from '../murphy/open';
 import { useMemo } from 'react';
 import { BODYPARTS3D, HRA, fmaRef, ontRef } from '../data/references';
@@ -11,9 +11,10 @@ import { InspectViewport } from '../scene/InspectViewport';
 import { Breadcrumbs } from './Breadcrumbs';
 import { SliceControl } from './SliceControl';
 import { useApp } from '../state/store';
-import { SYSTEM_TOPICS, TOPIC_BY_ID, studyFor, type Study } from '../learn';
+import { SYSTEM_TOPICS, studyFor, type Study } from '../learn';
 import { Rich } from '../learn/Rich';
 import { openLearn, useRoute } from '../learn/route';
+import { StudyModeButton } from './StudyMode';
 
 function Chips({ items, max = 18 }: { items: StructureRecord[]; max?: number }) {
   if (!items.length) return null;
@@ -48,7 +49,7 @@ const STUDY_SECTIONS: { key: 'location' | 'structure' | 'functions' | 'clinical'
 ];
 
 /** Structured study card: what it is → location → structure → function → clinical → key points. */
-function StudyCard({ study, registry, topicTitle, recId }: { study: Study; registry: Registry; topicTitle?: string; recId: string }) {
+function StudyCard({ study, registry }: { study: Study; registry: Registry }) {
   const link = (id: string) => viewer.selectAndFocus(id);
   const present = STUDY_SECTIONS.filter((x) => (study[x.key]?.length ?? 0) > 0);
   const jump = (k: string) => document.getElementById(`sc-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -113,16 +114,6 @@ function StudyCard({ study, registry, topicTitle, recId }: { study: Study; regis
           <Info size={13} /> No dedicated card yet: location and contents come from the model hierarchy{study.from ? `; function and clinical notes are those of the ${study.from.toLowerCase()}` : ''}.
         </p>
       )}
-      {study.topic && topicTitle && (
-        <button className="study-more" onClick={() => openLearn(study.topic!, undefined, recId)}>
-          <GraduationCap size={16} />
-          <span>
-            <small>Study guide</small>
-            {topicTitle}
-          </span>
-          <ChevronRight size={16} />
-        </button>
-      )}
     </section>
   );
 }
@@ -165,6 +156,7 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
     const meshes = registry.unitStructure.size;
     return (
       <div className="inspector empty-state">
+        <StudyModeButton registry={registry} />
         <div className="es-head">
           <div className="empty-icon">
             <Crosshair size={20} />
@@ -223,7 +215,6 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
   const isFaded = faded.has(rec.id);
   const isBone = rec.system === 'skeletal' && rec.kind === 'structure' && !/cartilage|disk|ligament|membrane|tooth/i.test(rec.name);
   const st = info.study;
-  const topic = st.topic ? TOPIC_BY_ID.get(st.topic) : undefined;
 
   return (
     <div className="inspector">
@@ -235,6 +226,7 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
           {rec.kind !== 'structure' && <span className="tag">{rec.kind === 'system' ? 'System' : 'Group'} · {rec.unitCount} meshes</span>}
           {rec.side && <span className="tag">{rec.side === 'L' ? 'Left' : 'Right'}</span>}
           {rec.landmark && <span className="tag gold">Landmark surface</span>}
+          {rec.zaMuscle && <span className="tag" title="Muscle mesh from Z-Anatomy (CC BY-SA 4.0), fitted to this body">Z-Anatomy</span>}
           {rec.adapted && <span className="tag" title="Not present in the female source data: mesh from the male model (BodyParts3D), fitted to this body">Adapted from male model</span>}
           {onClose && (
             <button className="icon-btn xs ghost push" onClick={onClose} aria-label="Close details">
@@ -245,6 +237,10 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
         <h2>{rec.name}</h2>
         {rec.synonyms && rec.synonyms.length > 0 && <div className="synonyms">{rec.synonyms.slice(0, 4).join(' · ')}</div>}
       </header>
+
+      <div className="sm-cta-wrap">
+        <StudyModeButton registry={registry} />
+      </div>
 
       <div className="insp-actions" role="toolbar" aria-label="Structure actions">
         <button className="act" onClick={() => viewer.focus(rec.id)} title="Fly to (F)">
@@ -298,7 +294,7 @@ export function InspectorPanel({ registry, quality, onClose }: { registry: Regis
       )}
 
       <div className="insp-body">
-        <StudyCard study={st} registry={registry} topicTitle={topic?.title} recId={rec.id} />
+        <StudyCard study={st} registry={registry} />
 
         <dl className="facts">
           {rec.fma && (

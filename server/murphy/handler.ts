@@ -1,4 +1,4 @@
-import { answerPrompt, ANSWER_SYSTEM, parsePlan, planPrompt, PLAN_SYSTEM } from './prompts.js';
+import { answerPrompt, ANSWER_SYSTEM, isSmallTalk, parsePlan, planPrompt, PLAN_SYSTEM } from './prompts.js';
 import { providerFromEnv, type Env, type LlmMessage, LlmError } from './providers.js';
 import { retrieve } from './retrieve.js';
 import type { ChatTurn, MurphyEvent, MurphyRequest, Plan, Source } from './types.js';
@@ -83,7 +83,7 @@ export async function handleMurphy(req: Request, env: Env = (globalThis as { pro
   if (req.method === 'GET') return json({ ok: true, configured: !!provider, provider: provider?.name ?? null }, 200, headers);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405, headers);
   if (!provider) return json({ error: 'Doctor Murphy is not configured on the server (missing GEMINI_API_KEY).', code: 'not_configured' }, 503, headers);
-  if (limited(clientIp(req), Number(env.MURPHY_RATE_PER_MINUTE) || DEFAULT_PER_MINUTE)) return json({ error: 'Too many questions in a minute — please wait a moment.', code: 'rate_limited' }, 429, headers);
+  if (limited(clientIp(req), Number(env.MURPHY_RATE_PER_MINUTE) || DEFAULT_PER_MINUTE)) return json({ error: 'Easy there — that’s a lot of questions in a minute! Give me a moment and ask again.', code: 'rate_limited' }, 429, headers);
 
   let parsed: MurphyRequest | string;
   try {
@@ -104,7 +104,10 @@ export async function handleMurphy(req: Request, env: Env = (globalThis as { pro
         // 1. Understand: fix spelling, resolve follow-ups against the app context, plan searches.
         send({ type: 'status', stage: 'understanding' });
         let plan: Plan;
-        try {
+        if (isSmallTalk(message)) {
+          // Small talk: no planning call and no literature search — straight to Dr. Murphy.
+          plan = { ...parsePlan('', message), retrieve: false, depth: 'brief', focus: 'friendly small-talk reply in character', intent: 'other' };
+        } else try {
           const r = await provider.complete({ system: PLAN_SYSTEM, messages: [{ role: 'user', text: planPrompt(message, history, context) }], json: true, fast: true, temperature: 0, maxTokens: 1024, signal: ac.signal });
           plan = parsePlan(r.text, message);
         } catch {
@@ -133,7 +136,7 @@ export async function handleMurphy(req: Request, env: Env = (globalThis as { pro
         send({ type: 'done', model: s.model });
       } catch (e) {
         const quota = e instanceof LlmError && e.status === 429;
-        send({ type: 'error', code: quota ? 'quota' : 'failed', message: quota ? 'Doctor Murphy has reached the free usage limit for now. Please try again in a little while.' : 'Doctor Murphy could not answer right now. Please try again.' });
+        send({ type: 'error', code: quota ? 'quota' : 'failed', message: quota ? 'I’ve had a lot of students today and need a short breather — please ask me again in a minute or two.' : 'Sorry, I lost my train of thought there — could you ask that again?' });
         console.error('[murphy]', e instanceof Error ? e.message : e);
       } finally {
         clearInterval(ping);

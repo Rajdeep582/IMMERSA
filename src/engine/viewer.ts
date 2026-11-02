@@ -20,6 +20,8 @@ class ViewerApi {
   frameListeners = new Set<(cam: THREE.PerspectiveCamera) => void>();
   /** Camera pose carried across a male/female model switch. */
   lastPose: CameraPose | null = null;
+  /** Uploads the loaded scene to the GPU a slice per frame (set by the main viewport). */
+  warmUpload: (() => Promise<void>) | null = null;
   get resumedFromSwitch() {
     return this.lastPose !== null;
   }

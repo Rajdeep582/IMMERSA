@@ -63,7 +63,7 @@ function Figure3D({ target, caption, ctx, n }: { target: { male?: string; female
       </div>
       <figcaption>
         <span className="lfig-no">Fig. {n}</span> {caption}
-        {rec && ctx.registry?.model === 'female' && rec.id === 'sys:skeletal' && <em className="lfig-cov"> Skull, thorax and upper-limb bones in the female model are adapted from the male model.</em>}
+        {rec && ctx.registry?.model === 'female' && rec.id === 'sys:skeletal' && <em className="lfig-cov"> The female model (HRA) contains the vertebral column, pelvis and lower-limb bones only.</em>}
         {rec && (
           <button className="xlink strong" onClick={() => ctx.onLink(rec.id)}>
             Open in 3D explorer <ArrowRight size={13} />

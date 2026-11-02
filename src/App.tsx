@@ -9,14 +9,14 @@ import { detectQuality, webgl2Available } from './engine/quality';
 import { STANDARD_VIEWS } from './engine/cameraRig';
 import { viewer } from './engine/viewer';
 import { GuidedPanel, JourneyPicker } from './guided/GuidedPanel';
-import { MainViewport } from './scene/MainViewport';
+import { MainViewport, prebuildScene } from './scene/MainViewport';
 import { useApp } from './state/store';
 import { Breadcrumbs } from './ui/Breadcrumbs';
 import { ImmersiveBar } from './ui/ImmersiveBar';
 import { ExploreTree } from './ui/ExploreTree';
 import { InspectorPanel } from './ui/InspectorPanel';
 import { LayersPanel } from './ui/LayersPanel';
-import { HintToast, HoverLabel, LoadingVeil, SelectionPin, StatsOverlay } from './ui/Overlays';
+import { FemaleNotice, HintToast, HoverLabel, LoadingVeil, SelectionPin, StatsOverlay } from './ui/Overlays';
 import { Labels3D } from './ui/Labels3D';
 import { Search } from './ui/Search';
 import { SourcesPanel } from './ui/SourcesPanel';
@@ -147,6 +147,7 @@ export function App() {
   const sliceOpen = useApp((s) => s.sliceOpen);
   const route = useRoute();
   const learning = route.view === 'learn';
+  const studyMode = useApp((s) => s.studyMode);
   const canBack = useCanGoBack();
   useKeyboard();
 
@@ -204,7 +205,15 @@ export function App() {
       useApp.subscribe((s) => {
         const eager = SYSTEMS.filter((m) => m.eager);
         if (!eager.every((m) => s.systemStatus[m.id] === 'ready' || s.systemStatus[m.id] === 'error')) return;
-        window.setTimeout(() => preloadModel(s.bodyModel === 'male' ? 'female' : 'male', s.tier), 1200);
+        const other = s.bodyModel === 'male' ? 'female' : 'male';
+        window.setTimeout(
+          () =>
+            void preloadModel(other, s.tier)
+              .then(() => loadRegistry(other))
+              .then((reg) => prebuildScene(reg, quality))
+              .catch(() => undefined),
+          1200,
+        );
       }),
     [],
   );
@@ -218,8 +227,16 @@ export function App() {
         const st = useApp.getState();
         const mapped = registry ? mapSelection(registry, next, st.selectedId) : null;
         setPicker(false);
-        setRegistry(next);
-        st.setBodyModel(m, mapped);
+        // Let the toggle animate first (two frames), then swap the scene.
+        return new Promise<void>((resolve) =>
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              setRegistry(next);
+              st.setBodyModel(m, mapped);
+              resolve();
+            }),
+          ),
+        );
       })
       .catch((e: unknown) => useApp.getState().showHint(`Could not load the ${m} model: ${e instanceof Error ? e.message : String(e)}`))
       .finally(() => setSwitching(null));
@@ -288,6 +305,7 @@ export function App() {
         immersive ? 'immersive' : '',
         mobile && sheet !== 'none' ? 'sheet-open' : '',
         learning ? 'learning' : '',
+        studyMode && !mobile ? 'study-open' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -296,6 +314,7 @@ export function App() {
       {registry && <HoverLabel registry={registry} />}
       {registry && !learning && <Labels3D key={`l-${registry.model}`} registry={registry} />}
       {registry && <SelectionPin key={registry.model} registry={registry} />}
+      {!learning && <FemaleNotice />}
       <LoadingVeil />
 
       <header className="topbar">
@@ -325,7 +344,7 @@ export function App() {
             {leftOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
           </button>
           {!guided && (
-            <aside className={`panel right ${rightOpen ? 'open' : ''}`} aria-label="Structure inspector" aria-hidden={!rightOpen}>
+            <aside className={`panel right ${rightOpen ? 'open' : ''} ${studyMode ? 'study' : ''}`} aria-label="Structure inspector" aria-hidden={!rightOpen}>
               <InspectorPanel registry={registry} quality={quality} />
             </aside>
           )}

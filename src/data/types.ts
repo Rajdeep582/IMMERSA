@@ -45,6 +45,8 @@ export interface StructureRecord {
   hraNode?: string;
   /** Geometry taken from the other body model and fitted to this one (female: skull, thorax, arms…). */
   adapted?: 'male';
+  /** Muscle mesh from Z-Anatomy (CC BY-SA 4.0), fitted to this body. */
+  zaMuscle?: string;
   /** Z-Anatomy node the mesh came from. */
   zaNode?: string;
 }

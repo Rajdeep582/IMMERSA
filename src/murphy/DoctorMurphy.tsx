@@ -30,7 +30,7 @@ const FOLLOW_UPS: [string, string][] = [
   ['Clinical relevance', 'What is the clinical relevance of that?'],
   ['Memory aid', 'Give me a memory aid for that.'],
 ];
-const STAGE_TEXT = { understanding: 'Understanding your question', searching: 'Searching PubMed, StatPearls & MedlinePlus', writing: 'Writing the answer' } as const;
+const STAGE_TEXT = { understanding: 'Dr. Murphy is thinking', searching: 'Checking my references', writing: 'Dr. Murphy is typing' } as const;
 let seq = Date.now();
 
 function loadChat(): Msg[] {
@@ -76,7 +76,7 @@ function Sources({ sources, open, onToggle }: { sources: Source[]; open: boolean
   return (
     <div className={`dm-sources ${open ? 'open' : ''}`}>
       <button className="dm-src-toggle" onClick={onToggle} aria-expanded={open}>
-        <BookOpen size={13} /> {sources.length} source{sources.length === 1 ? '' : 's'}
+        <BookOpen size={13} /> References ({sources.length})
         <ChevronDown size={14} className="chev" />
       </button>
       {open && (
@@ -122,7 +122,6 @@ function AssistantMsg({ m, last, onFollow }: { m: Msg; last: boolean; onFollow: 
             <AlertTriangle size={15} /> If this is happening now, seek emergency care — dial <b>112</b> (India) or your local emergency number.
           </div>
         )}
-        {m.interpreted && <div className="dm-interp">Interpreted as: “{m.interpreted}”</div>}
         {m.content ? (
           <div className="dm-md">
             <Markdown text={m.content} onCite={cite} />
@@ -272,7 +271,7 @@ export function DoctorMurphy({ placement }: { placement: string }) {
           }
         }
       } catch (e) {
-        if ((e as Error).name !== 'AbortError') patch({ error: navigator.onLine ? 'Could not reach Doctor Murphy. Check your connection and try again.' : 'You are offline.' });
+        if ((e as Error).name !== 'AbortError') patch({ error: navigator.onLine ? 'Hmm, I couldn’t get through just now — check your connection and ask me again?' : 'You are offline.' });
       } finally {
         patch((m) => ({ streaming: false, stage: null, content: m.content || (m.error ? '' : ac.signal.aborted ? '_Stopped._' : '') }));
         abortRef.current = null;
@@ -292,7 +291,7 @@ export function DoctorMurphy({ placement }: { placement: string }) {
 
   return createPortal(
     <div className={`dm-root ${placement}`}>
-      <button className={`dm-fab ${open ? 'hidden' : ''} ${online ? '' : 'off'}`} onClick={() => setOpen(true)} aria-label="Ask Doctor Murphy" title="Doctor Murphy — medical study assistant">
+      <button className={`dm-fab ${open ? 'hidden' : ''} ${online ? '' : 'off'}`} onClick={() => setOpen(true)} aria-label="Ask Dr. Murphy" title="Dr. Murphy — medical study assistant">
         <span className="dm-fab-ring" aria-hidden />
         <DoctorAvatar size={58} state="idle" className="dm-fab-av" />
         <span className="dm-fab-tip" aria-hidden>
@@ -306,13 +305,13 @@ export function DoctorMurphy({ placement }: { placement: string }) {
       </button>
 
       {open && (
-        <section className={`dm-panel ${full ? 'full' : 'card'}`} role="dialog" aria-label="Doctor Murphy chat">
+        <section className={`dm-panel ${full ? 'full' : 'card'}`} role="dialog" aria-label="Dr. Murphy chat">
           <header className="dm-head">
             <DoctorAvatar size={42} state={headState} className="dm-av-head" />
             <div className="dm-id">
-              <div className="dm-name">Doctor Murphy</div>
+              <div className="dm-name">Dr. Murphy</div>
               <div className="dm-sub">
-                <span className={`dm-dot ${avail === 'ready' && online ? 'ok' : blocked ? 'bad' : ''}`} /> {statusText} · medical study assistant
+                <span className={`dm-dot ${avail === 'ready' && online ? 'ok' : blocked ? 'bad' : ''}`} /> {statusText} · your resident doctor
               </div>
             </div>
             {msgs.length > 0 && (
@@ -323,12 +322,12 @@ export function DoctorMurphy({ placement }: { placement: string }) {
             <button className="dm-icon" onClick={toggleFull} aria-label={full ? 'Exit full screen' : 'Full screen'} title={full ? 'Exit full screen' : 'Full screen'}>
               {full ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
             </button>
-            <button className="dm-icon" onClick={() => setOpen(false)} aria-label="Close Doctor Murphy">
+            <button className="dm-icon" onClick={() => setOpen(false)} aria-label="Close Dr. Murphy">
               <X size={18} />
             </button>
           </header>
           {focus && (
-            <div className="dm-focus" title="Doctor Murphy knows what you are looking at">
+            <div className="dm-focus" title="Dr. Murphy knows what you are looking at">
               Looking at <b>{focus}</b> · {useApp.getState().bodyModel} anatomy
             </div>
           )}
@@ -338,8 +337,8 @@ export function DoctorMurphy({ placement }: { placement: string }) {
               <div className="dm-empty">
                 <div className="dm-hello">
                   <DoctorAvatar size={84} state="idle" className="dm-av-hello" />
-                  <h3>Hi, I’m Doctor Murphy</h3>
-                  <p>Ask me about anatomy, physiology, pathology, diagnosis or treatment. I search PubMed, StatPearls and MedlinePlus and cite what I use. Typos are fine.</p>
+                  <h3>Hi, I’m Dr. Murphy 👋</h3>
+                  <p>Your friendly resident doctor. Ask me anything — anatomy, physiology, pathology, a tricky case or that viva question you’re dreading. Typos are fine, I’ll figure it out.</p>
                   <p className="dm-privacy">Please don’t share names or other personal details.</p>
                 </div>
                 <div className="dm-suggest">
@@ -366,11 +365,11 @@ export function DoctorMurphy({ placement }: { placement: string }) {
             <div className="dm-banner">
               {!online || avail === 'offline' ? (
                 <>
-                  <WifiOff size={15} /> You’re offline. Doctor Murphy needs the internet — the 3D anatomy and Learn guides keep working.
+                  <WifiOff size={15} /> You’re offline. Dr. Murphy needs the internet — the 3D anatomy and Learn guides keep working.
                 </>
               ) : (
                 <>
-                  <AlertTriangle size={15} /> Doctor Murphy isn’t set up on this server yet (missing API key or endpoint).
+                  <AlertTriangle size={15} /> Dr. Murphy isn’t set up on this server yet (missing API key or endpoint).
                 </>
               )}
             </div>
@@ -401,7 +400,7 @@ export function DoctorMurphy({ placement }: { placement: string }) {
                 }
               }}
               disabled={blocked}
-              aria-label="Message Doctor Murphy"
+              aria-label="Message Dr. Murphy"
             />
             {busy ? (
               <button type="button" className="dm-send stop" onClick={stop} aria-label="Stop">
@@ -413,7 +412,7 @@ export function DoctorMurphy({ placement }: { placement: string }) {
               </button>
             )}
           </form>
-          <div className="dm-foot">Educational use only — not a diagnosis or medical advice. Answers can contain mistakes; check the sources.</div>
+          <div className="dm-foot">I’m a teaching assistant, not your doctor — answers can be wrong, so check the references.</div>
         </section>
       )}
     </div>,

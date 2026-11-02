@@ -101,8 +101,8 @@ export function LayersPanel({ registry }: { registry: Registry }) {
       )}
       <p className="note muted">
         {registry.model === 'male'
-          ? 'Male: BodyParts3D, with spinal cord and peripheral nerves added from Z-Anatomy. Not shown: lymph vessels, lung surfaces, skin layers.'
-          : 'Female: HRA Visible Human Female (organs, brain, spinal cord, pelvis, spine, leg bones, eyes, vessels) with peripheral nerves from Z-Anatomy. Skull, thoracic cage, shoulder girdle, arm bones, oesophagus, stomach and endocrine glands are adapted from the male model and fitted to this body. General musculature is not available yet.'}
+          ? 'Male: BodyParts3D, with spinal cord, peripheral nerves and the muscles BodyParts3D lacks (facial, abdominal wall, deep back, latissimus dorsi…) added from Z-Anatomy. Not shown: lymph vessels, lung surfaces, skin layers.'
+          : 'Female: HuBMAP HRA Visible Human Female, exactly as published — organs, brain, spinal cord, spine, pelvis, leg bones, eyes, vessels, reproductive organs. The source has no skull, ribs, arm bones, peripheral nerves or general musculature; nothing is substituted from the male body.'}
       </p>
     </div>
   );

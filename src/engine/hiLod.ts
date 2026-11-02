@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+import type { LoadedUnit } from './models';
 import type { Registry } from '../data/registry';
 import type { AnatomyScene } from './anatomyScene';
 import type { CameraRig } from './cameraRig';
@@ -23,6 +25,11 @@ export function chunkLabel(registry: Registry, chunk: string): string {
 export class HiLodController {
   private active = new Set<string>();
   private pending = new Set<string>();
+  /** Full-resolution swaps waiting their turn: uploaded a few per frame, nearest first, so a chunk
+   * arriving never pushes millions of vertices to the GPU in a single frame. */
+  private queue: { fj: string; chunk: string; u: LoadedUnit; tris: number }[] = [];
+  /** Triangles swapped (uploaded) per frame. */
+  swapBudget = 150000;
   private last = 0;
   enabled = true;
   maxChunks = 2;
@@ -41,6 +48,7 @@ export class HiLodController {
   }
 
   update(now: number) {
+    if (this.queue.length) this.drain();
     if (now - this.last < 220) return;
     this.last = now;
     const r = this.rig.radius;
@@ -70,7 +78,15 @@ export class HiLodController {
         if (!this.pending.has(chunk)) return; // released while loading
         this.pending.delete(chunk);
         this.active.add(chunk);
-        for (const u of units.values()) this.scene.setUnitGeometry(u.fj, u.geometry, u);
+        const t = this.rig.target;
+        const items = [...units.values()].map((u) => {
+          const g = u.geometry;
+          const tris = (g.index ? g.index.count : g.getAttribute('position').count) / 3;
+          const c = g.boundingSphere ? g.boundingSphere.center.clone().applyMatrix4(new THREE.Matrix4().compose(u.position, u.quaternion, u.scale)) : u.position;
+          return { fj: u.fj, chunk, u, tris, d: c.distanceToSquared(t) };
+        });
+        items.sort((a, b) => a.d - b.d);
+        for (const it of items) this.queue.push(it);
         this.onChange?.(this.labels());
         this.invalidate();
       })
@@ -81,7 +97,19 @@ export class HiLodController {
       });
   }
 
+  private drain() {
+    let budget = this.swapBudget;
+    while (this.queue.length && budget > 0) {
+      const it = this.queue.shift()!;
+      if (!this.active.has(it.chunk)) continue;
+      this.scene.setUnitGeometry(it.fj, it.u.geometry, it.u);
+      budget -= it.tris;
+    }
+    this.invalidate();
+  }
+
   release(chunk: string) {
+    this.queue = this.queue.filter((q) => q.chunk !== chunk);
     const wasActive = this.active.delete(chunk);
     const wasPending = this.pending.delete(chunk);
     if (!wasActive && !wasPending) return;
@@ -94,7 +122,7 @@ export class HiLodController {
   }
 
   get loading() {
-    return this.pending.size > 0;
+    return this.pending.size > 0 || this.queue.length > 0;
   }
 
   labels(): string[] {

@@ -17,6 +17,70 @@ import { useStats } from '../state/stats';
 
 let drillHinted = false;
 
+/**
+ * Built scenes are kept per body model (except on low-memory devices), so switching male ⇄ female swaps
+ * an already merged, already uploaded scene instead of rebuilding ~2,500 meshes and their batches.
+ */
+const sceneCache = new Map<string, AnatomyScene>();
+const cacheScenes = (q: QualityProfile) => q.tier !== 'low';
+function sceneFor(registry: Registry, q: QualityProfile): AnatomyScene {
+  const key = `${registry.model}|${q.tier}`;
+  let s = cacheScenes(q) ? sceneCache.get(key) : undefined;
+  if (!s) {
+    s = new AnatomyScene(registry, q.tier, { batch: !/[?&]batch=0/.test(location.search) });
+    if (cacheScenes(q)) sceneCache.set(key, s);
+  }
+  return s;
+}
+
+/** Resolve after the browser has had a chance to paint (and run animations). */
+const yieldFrame = () => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+
+const idleCb = (cb: () => void) => {
+  const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (ric) ric(cb, { timeout: 600 });
+  else window.setTimeout(cb, 30);
+};
+
+/**
+ * Build the other body's scene in idle time (meshes from the background-preloaded library, merged
+ * batches, shader programs and GPU buffers via one off-screen render), so the first switch is instant.
+ */
+export async function prebuildScene(registry: Registry, q: QualityProfile) {
+  if (!cacheScenes(q) || sceneCache.has(`${registry.model}|${q.tier}`)) return;
+  const anat = sceneFor(registry, q);
+  const lib = libraryFor(registry.model);
+  for (const meta of SYSTEMS) {
+    const m = registry.manifest.systems[meta.id];
+    if (!m || !meta.eager) continue;
+    const units = await lib.loadSystem(meta.id, m.file).catch(() => null);
+    if (!units) continue;
+    await new Promise<void>((r) => idleCb(() => (anat.addUnits(meta.id, units), r())));
+  }
+  // Wait for the merged batches, then upload everything once off-screen.
+  for (let i = 0; i < 200 && anat.mergesPending > 0; i++) await new Promise((r) => setTimeout(r, 150));
+  const d = viewer.debug;
+  if (!d || useApp.getState().bodyModel === registry.model) return;
+  await new Promise<void>((r) => idleCb(r));
+  try {
+    const st = useApp.getState();
+    anat.applyState({ opacity: st.opacity, hidden: new Set(), faded: new Set(), isolate: null, selectedId: null, hoveredId: null, explode: 0, sliceCount: st.sliceCount });
+    for (let i = 0; i < 40; i++) anat.update(0.25);
+    const scene = new THREE.Scene();
+    scene.add(anat.root);
+    const rt = new THREE.WebGLRenderTarget(4, 4);
+    const prev = d.gl.getRenderTarget();
+    await d.gl.compileAsync(scene, d.camera).catch(() => undefined);
+    d.gl.setRenderTarget(rt);
+    d.gl.render(scene, d.camera);
+    d.gl.setRenderTarget(prev);
+    rt.dispose();
+    scene.remove(anat.root);
+  } catch {
+    /* best effort */
+  }
+}
+
 const viewStateOf = (s: ReturnType<typeof useApp.getState>): ViewState => ({
   opacity: s.opacity,
   hidden: s.hidden,
@@ -78,13 +142,13 @@ function GroundGlow() {
 
 function SceneDriver({ registry, quality }: { registry: Registry; quality: QualityProfile }) {
   const { gl, camera, scene, invalidate, size, setDpr } = useThree();
-  const anat = useMemo(() => new AnatomyScene(registry, quality.tier, { batch: !/[?&]batch=0/.test(location.search) }), [registry, quality.tier]);
+  const anat = useMemo(() => sceneFor(registry, quality), [registry, quality]);
   const library = useMemo(() => libraryFor(registry.model), [registry]);
   const rigRef = useRef<CameraRig | null>(null);
   const hiRef = useRef<HiLodController | null>(null);
   const drill = useRef<{ x: number; y: number; t: number; stack: string[]; idx: number }>({ x: 0, y: 0, t: 0, stack: [], idx: 0 });
   const offset = useRef({ cur: 0, goal: 0, curY: 0, goalY: 0, lastCheck: 0 });
-  const perf = useRef({ ema: 1 / 60, slowFor: 0, fastFor: 0, dpr: quality.maxDpr, motionDpr: quality.maxDpr, lastMove: 0, frames: 0, acc: 0, lastStat: 0 });
+  const perf = useRef({ ema: 1 / 60, slowFor: 0, dpr: quality.maxDpr, steps: 0, gesturing: false, lastMove: 0, frames: 0, acc: 0, lastStat: 0 });
 
   // --- scene, rig, input wiring (once) ---
   useEffect(() => {
@@ -102,7 +166,43 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
     hi.onChange = (labels) => useApp.getState().setHiResRegion(labels.length ? labels.join(' · ') : null);
     hiRef.current = hi;
     library.setHiBudget(quality.hiChunkBudget);
+    hi.swapBudget = quality.tier === 'low' ? 40000 : quality.tier === 'medium' ? 90000 : 150000;
     viewer.attach(rig, anat, registry, invalidate);
+    anat.onBatchProgress = (n) => useApp.setState({ batchPending: n });
+    // Staged GPU upload while the start-up screen is up: settle the fades, then draw the scene into a
+    // tiny off-screen target a slice of triangles per frame, so buffers and shader programs are on the
+    // GPU before the first visible frame (no long freeze when the intro lifts).
+    viewer.warmUpload = async () => {
+      const budget = quality.tier === 'low' ? 60000 : quality.tier === 'medium' ? 150000 : 300000;
+      for (let i = 0; i < 60; i++) anat.update(0.25);
+      const meshes = anat.drawnMeshes();
+      const rt = new THREE.WebGLRenderTarget(4, 4);
+      const prevRT = gl.getRenderTarget();
+      const saved = meshes.map((m) => m.visible);
+      try {
+        await gl.compileAsync(scene, camera).catch(() => undefined);
+        let i = 0;
+        while (i < meshes.length) {
+          let tris = 0;
+          const from = i;
+          while (i < meshes.length && (tris < budget || i === from)) {
+            const g = meshes[i]!.geometry;
+            tris += (g.index ? g.index.count : g.getAttribute('position').count) / 3;
+            i++;
+          }
+          meshes.forEach((m, k) => (m.visible = k >= from && k < i));
+          gl.setRenderTarget(rt);
+          gl.render(scene, camera);
+          gl.setRenderTarget(prevRT);
+          meshes.forEach((m, k) => (m.visible = saved[k]!));
+          await yieldFrame();
+        }
+      } finally {
+        meshes.forEach((m, k) => (m.visible = saved[k]!));
+        gl.setRenderTarget(prevRT);
+        rt.dispose();
+      }
+    };
 
     rig.onUserInput = () => {
       const g = useApp.getState().guided;
@@ -133,8 +233,9 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
     };
     const input = new RigInput(el, rig, {
       pick: (x, y) => {
+        // Zoom / pinch pivot: never builds a BVH mid-gesture (falls back to the focal plane).
         const { ndc: n, vp } = toNdc(x, y);
-        const h = anat.pick(n, cam, 0, vp);
+        const h = anat.pick(n, cam, 0, vp, false);
         return h ? h.point : planeHit(x, y);
       },
       onTap: (x, y, type) => {
@@ -186,7 +287,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
       onHover: (x, y) => {
         if (rig.isMoving) return;
         const { ndc: n, vp } = toNdc(x, y);
-        const h = anat.pick(n, cam, 0, vp);
+        const h = anat.pick(n, cam, 0, vp, false);
         const r = el.getBoundingClientRect();
         useApp.getState().hover(h ? h.structureId : null, h ? { x: x - r.left, y: y - r.top } : null);
       },
@@ -210,8 +311,13 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
       el.removeEventListener('pointermove', kick);
       el.removeEventListener('wheel', kick);
       viewer.detach();
+      viewer.warmUpload = null;
       scene.remove(anat.root);
-      anat.dispose();
+      anat.onBatchProgress = null;
+      anat.onAsync = null;
+      // Cached scenes return to body-view meshes (full-resolution chunks may be evicted meanwhile).
+      for (const fj of anat.hiActiveUnits()) anat.setUnitGeometry(fj, null);
+      if (!cacheScenes(quality)) anat.dispose();
     };
   }, [anat, camera, gl, invalidate, quality, registry, scene, library]);
 
@@ -290,14 +396,27 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
       const m = manifest.systems[sys]!;
       library
         .loadSystem(sys, m.file)
-        .then((units) => {
+        .then(async (units) => {
           // A late result from a model that has since been switched away must not touch the new state.
           if (useApp.getState().bodyModel !== registry.model) return;
-          anat.addUnits(sys, units);
+          // Meshes are created a slice at a time between frames (big systems have ~1,000 parts), so the
+          // start-up animation never stalls; their merged batches are built once at the end.
+          let added = 0;
+          const all = [...units.entries()];
+          const SLICE = quality.tier === 'low' ? 60 : 140;
+          for (let i = 0; i < all.length; i += SLICE) {
+            if (useApp.getState().bodyModel !== registry.model) return;
+            added += anat.addUnits(sys, new Map(all.slice(i, i + SLICE)), undefined, true);
+            if (i + SLICE < all.length) await yieldFrame();
+          }
+          anat.flushBatches(sys);
           useApp.getState().setSystemStatus(sys, 'ready');
-          // Compile new shader programs in parallel (KHR_parallel_shader_compile) and warm picking BVHs in idle time.
-          gl.compileAsync(scene, camera).then(() => invalidate()).catch(() => undefined);
-          if (quality.tier !== 'low') anat.warmBvh();
+          // New meshes only (a cached scene on a body switch has them all): compile new shader programs in
+          // parallel (KHR_parallel_shader_compile) and warm picking BVHs in idle time.
+          if (added) {
+            gl.compileAsync(scene, camera).then(() => invalidate()).catch(() => undefined);
+            anat.warmBvh();
+          }
           if (!arrived) {
             arrived = true;
             if (!viewer.resumedFromSwitch) rigRef.current?.flyTo(HOME_POSE, { duration: 2.1, arc: false });
@@ -411,40 +530,27 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
     for (const fn of viewer.frameListeners) fn(cam);
     if (a || b || hiRef.current?.loading) invalidate();
 
-    // Resolution policy: frames drawn while the view moves use an adaptive resolution (never below one
-    // device-independent pixel per CSS pixel); once everything settles, one sharp frame is drawn at the
-    // device's full quality resolution, so a still image is never blurry.
+    // Resolution policy: one fixed render resolution (never lowered while moving, so nothing turns
+    // blurry and the canvas is never reallocated mid-gesture). Only if a device stays far below 30 fps
+    // while interacting for several seconds is the resolution stepped down once, permanently.
     const p = perf.current;
     const moving = a || b || !!hiRef.current?.loading;
-    if (moving) {
-      p.lastMove = performance.now();
-      if (dt < 0.25) {
-        p.ema = p.ema * 0.9 + dt * 0.1;
-        if (p.ema > 1 / 40) {
-          p.slowFor += dt;
-          p.fastFor = 0;
-        } else if (p.ema < 1 / 56) {
-          p.fastFor += dt;
-          p.slowFor = 0;
-        } else p.slowFor = p.fastFor = 0;
-        if (p.slowFor > 0.5 && p.motionDpr > quality.minDpr) {
-          p.motionDpr = Math.max(quality.minDpr, +(p.motionDpr - 0.25).toFixed(2));
-          p.slowFor = 0;
-        } else if (p.fastFor > 2 && p.motionDpr < quality.maxDpr) {
-          p.motionDpr = Math.min(quality.maxDpr, +(p.motionDpr + 0.25).toFixed(2));
-          p.fastFor = 0;
-        }
-      }
-      if (p.dpr !== p.motionDpr) {
-        p.dpr = p.motionDpr;
+    const gesturing = rig.isMoving;
+    if (moving) p.lastMove = performance.now();
+    if (gesturing !== p.gesturing) {
+      p.gesturing = gesturing;
+      // Frosted-glass panels are re-blurred every frame the canvas changes: pause the blur during gestures.
+      document.documentElement.classList.toggle('gesturing', gesturing);
+    }
+    if (gesturing && dt < 0.25) {
+      p.ema = p.ema * 0.9 + dt * 0.1;
+      p.slowFor = p.ema > 1 / 24 ? p.slowFor + dt : 0;
+      if (p.slowFor > 4 && p.steps < 2 && p.dpr > Math.max(1, quality.minDpr)) {
+        p.steps++;
+        p.slowFor = 0;
+        p.dpr = Math.max(1, quality.minDpr, +(p.dpr - 0.25).toFixed(2));
         setDpr(p.dpr);
       }
-    } else if (p.dpr < quality.maxDpr) {
-      if (performance.now() - p.lastMove > 160) {
-        p.dpr = quality.maxDpr;
-        setDpr(p.dpr);
-        invalidate();
-      } else invalidate();
     }
     p.frames++;
     p.acc += dt;
@@ -470,7 +576,10 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
   return null;
 }
 
-export function MainViewport({ registry, quality, paused = false }: { registry: Registry; quality: QualityProfile; paused?: boolean }) {
+export function MainViewport({ registry, quality, paused: pausedProp = false }: { registry: Registry; quality: QualityProfile; paused?: boolean }) {
+  // Nothing is drawn behind the start-up screen: loading work gets the main thread to itself.
+  const intro = useApp((s) => s.introActive);
+  const paused = pausedProp || intro;
   // Hidden under the Learn page: stop drawing entirely (GPU/battery), resume with one frame.
   useEffect(() => {
     if (!paused) for (const t of [0, 60, 250]) window.setTimeout(() => viewer.invalidate(), t);
@@ -478,6 +587,7 @@ export function MainViewport({ registry, quality, paused = false }: { registry: 
   return (
     <div className="viewport" aria-label="3D anatomy viewport. Drag to rotate, scroll or pinch to zoom toward the pointer, right-drag or two fingers to pan.">
       <Canvas
+        resize={{ scroll: false }}
         frameloop={paused ? 'never' : 'demand'}
         dpr={quality.maxDpr}
         gl={{ antialias: quality.antialias, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: false, stencil: false, depth: true, failIfMajorPerformanceCaveat: false }}

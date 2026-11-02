@@ -72,6 +72,9 @@ const SPECS: Spec[] = [
   ['Sternocleidomastoid', 3, ['L|sternocleidomastoid']],
   ['Trapezius', 3, ['L|trapezius']],
   ['External oblique', 3, ['L|external oblique']],
+  ['Rectus abdominis', 2, ['L|rectus abdominis', 'Rectus abdominis']],
+  ['Latissimus dorsi', 3, ['L|latissimus dorsi']],
+  ['Temporalis', 3, ['L|temporalis']],
   ['Gluteus maximus', 3, ['L|gluteus maximus']],
   ['Rectus femoris', 1, ['L|rectus femoris']],
   ['Sartorius', 3, ['L|sartorius']],
@@ -126,6 +129,8 @@ export function Labels3D({ registry }: { registry: Registry }) {
   const dots = useRef<(SVGCircleElement | null)[]>([]);
   const tags = useRef<(HTMLButtonElement | null)[]>([]);
   const chosen = useRef<number[]>([]);
+  // Tag widths are measured once (layout reads inside the per-frame callback would force a reflow every frame).
+  const widths = useRef<number[]>([]);
 
   useEffect(() => {
     if (!on || guided) return;
@@ -227,7 +232,13 @@ export function Labels3D({ registry }: { registry: Registry }) {
         for (const c of col) {
           // the whole tag stays on screen: clamp by its measured width
           const tag = tags.current[c.i];
-          const w = (tag?.offsetWidth || items[c.i]!.label.length * 6 + 22) + 6;
+          let w = widths.current[c.i];
+          if (!w) {
+            w = tag?.offsetWidth || 0;
+            if (w) widths.current[c.i] = w;
+            else w = items[c.i]!.label.length * 6 + 22;
+          }
+          w += 6;
           const x = side < 0 ? Math.max(bounds.l + 6 + w, c.cx - half - 18) : Math.min(W - bounds.r - 6 - w, c.cx + half + 18);
           placed.set(c.i, { x, y: c.y, ax: c.ax, ay: c.ay, side });
         }

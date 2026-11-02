@@ -29,6 +29,13 @@ export interface AppState {
   setLayout: (l: 'phone' | 'tablet' | 'desktop') => void;
   /** One-finger / left-button drag pans instead of rotating. */
   panMode: boolean;
+  /** Right panel shows the full study view. */
+  studyMode: boolean;
+  setStudyMode: (v: boolean) => void;
+  /** Start-up screen still covering the app (the 3D view does not draw meanwhile). */
+  introActive: boolean;
+  /** Merged draw batches still being built (start-up screen waits for 0). */
+  batchPending: number;
   /** Atlas labels with leader lines in the 3D view. */
   labels: boolean;
   setLabels: (v: boolean) => void;
@@ -89,6 +96,14 @@ export interface AppState {
 
 let hintSeq = 0;
 
+/** Default layer opacities per body. Female musculature is switched off for now (the HRA source only has
+ * a few muscles; a full fitted set is not enabled yet). */
+const opacitiesFor = (m: BodyModel): SystemOpacity => {
+  const o = defaultOpacities();
+  if (m === 'female') o.muscular = 0;
+  return o;
+};
+
 const initialModel = (): BodyModel => {
   try {
     const q = new URLSearchParams(location.search).get('body');
@@ -107,6 +122,10 @@ export const useApp = create<AppState>((set, get) => ({
   layout: 'desktop',
   setLayout: (layout) => set({ layout }),
   panMode: false,
+  batchPending: 0,
+  studyMode: false,
+  setStudyMode: (studyMode) => set(studyMode ? { studyMode, rightOpen: true } : { studyMode }),
+  introActive: typeof document !== 'undefined' && !!document.getElementById('intro'),
   labels: (() => {
     try {
       return localStorage.getItem('immersa.labels') !== '0';
@@ -126,6 +145,7 @@ export const useApp = create<AppState>((set, get) => ({
   setPanMode: (panMode) => set({ panMode }),
   setBodyModel: (bodyModel, mappedSelection = null) => {
     if (get().bodyModel === bodyModel) return;
+    set((x) => ({ opacity: { ...x.opacity, muscular: opacitiesFor(bodyModel).muscular } }));
     try {
       localStorage.setItem('immersa.body', bodyModel);
     } catch {
@@ -148,7 +168,7 @@ export const useApp = create<AppState>((set, get) => ({
   ready: false,
   fatal: null,
   systemStatus: {},
-  opacity: defaultOpacities(),
+  opacity: opacitiesFor(initialModel()),
   hidden: new Set(),
   faded: new Set(),
   isolate: null,
@@ -172,7 +192,7 @@ export const useApp = create<AppState>((set, get) => ({
   setOpacity: (s, v) => set((x) => ({ opacity: { ...x.opacity, [s]: v } })),
   setOpacities: (o) => set((x) => ({ opacity: { ...x.opacity, ...o } })),
   resetAppearance: () =>
-    set({ opacity: defaultOpacities(), hidden: new Set(), faded: new Set(), isolate: null, explode: 0 }),
+    set({ opacity: opacitiesFor(get().bodyModel), hidden: new Set(), faded: new Set(), isolate: null, explode: 0 }),
   toggleHidden: (id) =>
     set((x) => {
       const h = new Set(x.hidden);

@@ -323,11 +323,12 @@ uniform float uDetailRim;
 uniform vec3 uDetailAxis;
 uniform float uDetailStretch;
 uniform vec3 uDetailSeed;
-float dHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+uniform highp sampler3D uDetailNoise;
+// Value noise from a tiling 64³ lattice texture: hardware trilinear filtering at smoothstep-warped
+// coordinates reproduces smooth value noise with one texture fetch instead of eight hashes.
 float dNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(dHash(i), dHash(i + vec3(1, 0, 0)), f.x), mix(dHash(i + vec3(0, 1, 0)), dHash(i + vec3(1, 1, 0)), f.x), f.y),
-             mix(mix(dHash(i + vec3(0, 0, 1)), dHash(i + vec3(1, 0, 1)), f.x), mix(dHash(i + vec3(0, 1, 1)), dHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+  return textureLod(uDetailNoise, (i + f + 0.5) * (1.0 / 64.0), 0.0).r;
 }
 float detailField(vec3 p) {
   // Compress along the fibre axis so features elongate (muscle fascicles, tendon, nerve fibres).
@@ -355,6 +356,32 @@ export function setDetailAxis(m: THREE.Material, mesh: THREE.Mesh) {
   u.uDetailAxis.value.copy(ax.applyQuaternion(mesh.quaternion).normalize());
 }
 
+let noiseTex: THREE.Data3DTexture | null = null;
+/** Shared 64³ value-noise lattice (one byte per cell, repeating) for the procedural surface detail. */
+function detailNoiseTexture(): THREE.Data3DTexture {
+  if (noiseTex) return noiseTex;
+  const N = 64;
+  const data = new Uint8Array(N * N * N);
+  let s = 0x9e3779b9;
+  for (let i = 0; i < data.length; i++) {
+    // xorshift32
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    data[i] = (s >>> 0) & 255;
+  }
+  const t = new THREE.Data3DTexture(data, N, N, N);
+  t.format = THREE.RedFormat;
+  t.type = THREE.UnsignedByteType;
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = t.wrapR = THREE.RepeatWrapping;
+  t.generateMipmaps = false;
+  t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  noiseTex = t;
+  return t;
+}
+
 function applySurfaceDetail(m: THREE.MeshStandardMaterial, d: SurfaceDetail, seed: string) {
   const h = hash(seed);
   const uniforms = {
@@ -367,9 +394,9 @@ function applySurfaceDetail(m: THREE.MeshStandardMaterial, d: SurfaceDetail, see
     uDetailSeed: { value: new THREE.Vector3((h % 997) / 7.3, ((h >>> 8) % 991) / 5.1, ((h >>> 16) % 983) / 3.7) },
   };
   m.userData.detail = uniforms;
-  m.customProgramCacheKey = () => 'immersa-detail-v1';
+  m.customProgramCacheKey = () => 'immersa-detail-v2';
   m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
+    Object.assign(shader.uniforms, uniforms, { uDetailNoise: { value: detailNoiseTexture() } });
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vDetailPos;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvDetailPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#ifdef USE_SLICE_OFFSET\nvDetailPos.x -= sliceOffW;\n#endif');

@@ -24,9 +24,10 @@ describe('registry', () => {
       expect(reg.get(sid)?.units).toContain(fj);
       expect(reg.manifest.units[fj]).toBeDefined();
     }
-    // 2,234 BodyParts3D element meshes + Z-Anatomy peripheral nerve meshes
+    // 2,234 BodyParts3D element meshes + Z-Anatomy peripheral nerve (Z_) and muscle (ZM_) meshes
     expect(reg.unitStructure.size).toBeGreaterThan(2234 + 200);
-    expect([...reg.unitStructure.keys()].filter((u) => !u.startsWith('Z_')).length).toBe(2234);
+    expect([...reg.unitStructure.keys()].filter((u) => !u.startsWith('Z_') && !u.startsWith('ZM_')).length).toBe(2234);
+    expect([...reg.unitStructure.keys()].filter((u) => u.startsWith('ZM_')).length).toBeGreaterThan(100);
   });
   it('hierarchy is a consistent tree rooted at systems', () => {
     for (const s of reg.structures.values()) {
@@ -154,7 +155,8 @@ describe('camera rig', () => {
 });
 
 describe('peripheral nervous system', () => {
-  for (const [m, r] of [['male', reg], ['female', fem]] as const) {
+  // Female: HRA data only (no peripheral nerves in the source).
+  for (const [m, r] of [['male', reg]] as const) {
     it(`${m}: major nerves and plexuses are modelled and selectable`, () => {
       for (const n of ['Brachial plexus', 'Lumbar plexus', 'Sacral plexus', 'Sciatic nerve', 'Median nerve', 'Ulnar nerve', 'Radial nerve', 'Femoral nerve', 'Vagus nerve (CN X)', 'Sympathetic trunk', 'Intercostal nerves', 'Cauda equina', 'Phrenic nerve', 'Ganglia of sympathetic trunk']) {
         const rec = resolveName(r, n);

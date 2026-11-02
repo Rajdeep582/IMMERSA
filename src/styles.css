@@ -5833,3 +5833,353 @@ a,
 .l3d-tag:hover { background: rgba(20, 24, 30, 0.92); border-color: var(--c); }
 .app.mobile .l3d-tag { font-size: 10px; padding: 1px 6px 1px 5px; }
 .app.learning .labels3d { display: none; }
+
+/* =================== R14: performance =================== */
+/* While the 3D view is being dragged, frosted-glass panels drop their live blur (re-blurring the
+   moving canvas every frame is costly on mobile GPUs); the panels are near-opaque so the look holds. */
+html.gesturing .panel,
+html.gesturing .topbar,
+html.gesturing .toolbar,
+html.gesturing .sheet,
+html.gesturing .l3d-tag,
+html.gesturing .guided,
+html.gesturing .dm-fab,
+html.gesturing .bottom-nav {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.gesturing .panel { background: rgba(16, 19, 24, 0.95); }
+html.gesturing .l3d-tag { background: rgba(12, 14, 18, 0.82); }
+.l3d-tag { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(12, 14, 18, 0.78); }
+
+/* =================== female model notice =================== */
+.female-note {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 8px 8px 8px 12px;
+  border-radius: 12px;
+  background: rgba(40, 30, 10, 0.88);
+  border: 1px solid rgba(242, 201, 76, 0.55);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  color: #f3ead2;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.female-note .fn-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f2c94c;
+  color: #2a1f05;
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.female-note .fn-text { flex: 1; }
+.app.mobile .female-note { top: 58px; font-size: 11.5px; flex-wrap: wrap; }
+.app.immersive .female-note { top: 12px; }
+
+/* =================== R15: slimmer, more compact right panel =================== */
+.layout-desktop { --rw: 328px; }
+@media (min-width: 1600px) {
+  .layout-desktop { --rw: 348px; }
+}
+.layout-tablet { --rw: 336px; }
+.panel.right .empty-state { padding: 14px 14px 16px; }
+.panel.right .es-head { gap: 10px; }
+.panel.right .es-head .empty-icon { width: 38px; height: 38px; }
+.panel.right .es-title { font-size: 15px; }
+.panel.right .es-lead { font-size: 13px; line-height: 1.45; margin: 10px 0 2px; }
+.panel.right .es-h { margin: 14px 0 7px; font-size: 10px; }
+.panel.right .chips { gap: 5px; }
+.panel.right .chip { padding: 4px 9px; font-size: 12.5px; }
+.panel.right .keys { gap: 5px 12px; font-size: 12px; }
+.panel.right .insp-head { padding: 12px 14px 4px; }
+.panel.right .empty-state .slicer.in-panel { margin: 10px 0 4px; padding: 10px 10px 8px; gap: 8px; }
+.panel.right .slicer-icon { width: 26px; height: 26px; border-radius: 8px; }
+.panel.right .slicer-title strong { font-size: 13px; }
+.panel.right .slicer-title span { font-size: 11.5px; }
+
+/* =================== R16: Study mode =================== */
+.app.layout-desktop.study-open { --rw: min(460px, 44vw); }
+.app.layout-tablet.study-open { --rw: min(440px, 60vw); }
+.panel.right { transition: transform 0.42s var(--spring), opacity 0.3s var(--spring), width 0.3s var(--ease, ease); }
+.sm-cta-wrap { padding: 4px 14px 2px; }
+.empty-state .sm-cta { margin: 0 0 14px; }
+.sm-cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(242, 201, 76, 0.55);
+  background: linear-gradient(135deg, #f2c94c 0%, #d9a63a 55%, #b9832c 100%);
+  color: #1d1504;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 10px 28px -12px rgba(242, 201, 76, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform 0.15s var(--ease, ease), box-shadow 0.2s;
+}
+.sm-cta:hover { transform: translateY(-1px); box-shadow: 0 14px 32px -12px rgba(242, 201, 76, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+.sm-cta:active { transform: scale(0.985); }
+.sm-cta-ic { flex: none; width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: rgba(29, 21, 4, 0.12); }
+.sm-cta-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sm-cta-txt strong { font-size: 16px; font-weight: 700; letter-spacing: 0.01em; }
+.sm-cta-txt small { font-size: 12px; opacity: 0.78; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.smv { padding: 12px 14px 18px; overflow: auto; height: 100%; scrollbar-width: thin; --c: #d9b360; }
+.sm-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.sm-back, .sm-focus {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--text); font-size: 12.5px; cursor: pointer;
+}
+.sm-focus { color: var(--accent); border-color: rgba(217, 179, 96, 0.4); }
+.sm-hero {
+  position: relative;
+  padding: 14px 14px 12px;
+  border-radius: 14px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--c) 22%, transparent), rgba(255, 255, 255, 0.02) 70%);
+  border: 1px solid color-mix(in srgb, var(--c) 35%, transparent);
+  overflow: hidden;
+}
+.sm-hero::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); }
+.sm-hero h2 { font-size: 20px; line-height: 1.2; margin: 4px 0 2px; font-weight: 650; }
+.sm-hero.overview { text-align: center; padding: 20px 16px; }
+.sm-hero.overview p { color: var(--text-2); font-size: 13px; line-height: 1.5; margin: 6px 0 0; }
+.sm-hero-ic { width: 52px; height: 52px; margin: 0 auto 8px; border-radius: 14px; display: grid; place-items: center; background: var(--accent); color: #1d1504; }
+.sm-path { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 11px; color: var(--muted); }
+.sm-path span { display: inline-flex; align-items: center; gap: 2px; }
+.sm-path button { background: none; border: 0; color: inherit; padding: 0; cursor: pointer; font: inherit; }
+.sm-path button:hover { color: var(--text); }
+.sm-syn { font-size: 12px; color: var(--muted); font-style: italic; }
+.sm-what { margin: 8px 0 0; font-size: 13.5px; line-height: 1.55; color: var(--text); }
+.sm-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
+.sm-fact { padding: 9px 10px; border-radius: 11px; background: rgba(255, 255, 255, 0.035); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sm-fact-l { display: inline-flex; align-items: center; gap: 5px; font: 500 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.sm-fact-v { font-size: 12.5px; line-height: 1.4; color: var(--text); }
+
+.sm-sec { margin-top: 14px; }
+.sm-sec h3 { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 650; margin: 0 0 8px; color: var(--text); }
+.sm-sec-ic { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--tone-bg); color: var(--tone); }
+.tone-loc { --tone: #7fb6e8; --tone-bg: rgba(127, 182, 232, 0.14); }
+.tone-str { --tone: #b49ae6; --tone-bg: rgba(180, 154, 230, 0.14); }
+.tone-fn { --tone: #6fcf97; --tone-bg: rgba(111, 207, 151, 0.14); }
+.tone-clin { --tone: #f07a6e; --tone-bg: rgba(240, 122, 110, 0.15); }
+.tone-key { --tone: #f2c94c; --tone-bg: rgba(242, 201, 76, 0.15); }
+.tone-rel { --tone: #8fb3c9; --tone-bg: rgba(143, 179, 201, 0.14); }
+.tone-ai { --tone: #5fd3c4; --tone-bg: rgba(95, 211, 196, 0.14); }
+.sm-list { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.sm-list li::marker { color: var(--tone); }
+.sm-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sm-steps li { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.sm-step-n { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11.5px; font-weight: 700; background: var(--tone-bg); color: var(--tone); border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent); }
+.sm-clin { display: grid; gap: 8px; }
+.sm-clin-card { padding: 10px 12px; border-radius: 11px; font-size: 13px; line-height: 1.5; color: var(--text); background: linear-gradient(90deg, rgba(240, 122, 110, 0.13), rgba(240, 122, 110, 0.03)); border: 1px solid rgba(240, 122, 110, 0.28); border-left: 3px solid #f07a6e; }
+.sm-key { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.sm-key li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; background: rgba(242, 201, 76, 0.08); border: 1px solid rgba(242, 201, 76, 0.22); font-size: 13px; line-height: 1.45; }
+.sm-key li svg { flex: none; margin-top: 2px; color: #f2c94c; }
+.sm-sub { font: 500 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 6px; }
+.sm-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.sm-chips button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); color: var(--text); font-size: 12px; cursor: pointer; }
+.sm-chips i { width: 7px; height: 7px; border-radius: 50%; }
+.sm-asks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sm-asks button { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(95, 211, 196, 0.3); background: rgba(95, 211, 196, 0.07); color: var(--text); font-size: 12.5px; cursor: pointer; text-align: left; }
+.sm-asks button:hover { background: rgba(95, 211, 196, 0.14); }
+.sm-guide { margin-top: 16px; width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 12px; border: 1px solid rgba(217, 179, 96, 0.45); background: rgba(217, 179, 96, 0.08); color: var(--text); cursor: pointer; text-align: left; }
+.sm-guide span { flex: 1; display: flex; flex-direction: column; font-size: 13.5px; font-weight: 600; }
+.sm-guide small { font: 500 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.sm-note { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--muted); margin: 12px 0 0; }
+.sm-refs { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 12px 0 0; font-size: 11.5px; }
+.sm-refs a { color: var(--muted); }
+.sm-systems { display: grid; gap: 7px; margin-top: 12px; }
+.sm-sys { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); color: var(--text); cursor: pointer; text-align: left; }
+.sm-sys:hover { border-color: color-mix(in srgb, var(--c) 55%, transparent); }
+.sm-sys-bar { width: 4px; align-self: stretch; border-radius: 4px; background: var(--c); }
+.sm-sys-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sm-sys-t strong { font-size: 13.5px; }
+.sm-sys-t small { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sheet .smv { height: auto; }
+
+/* =================== R17: isolated 3D view toolbar + kicker swatch =================== */
+.inspect-tools {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(10, 12, 15, 0.72);
+  border: 1px solid var(--line);
+}
+.inspect-tools .icon-btn { background: transparent; width: 30px; height: 30px; }
+.inspect-tools .tools-gap { width: 1px; height: 18px; flex: none; background: var(--line); margin: 0 3px; }
+
+/* ---------- R18 Learn scrolling: embedded 3D views and tables never trap the page scroll ---------- */
+.learn .inspect-canvas:not(.engaged):not(.is-full) canvas {
+  touch-action: pan-y;
+}
+.learn .inspect-canvas.engaged:not(.is-full) {
+  box-shadow: inset 0 0 0 1px rgba(217, 179, 96, 0.45);
+}
+.inspect-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(10, 12, 16, 0.82);
+  color: #ecebe7;
+  font-size: 12.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+  animation: pageIn 0.18s ease-out;
+}
+.ltable-scroll {
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+}
+.learn {
+  scrollbar-gutter: stable;
+}
+
+/* ---------- R19 responsive: band-centred chrome never leaves the free canvas band ---------- */
+.toolbar,
+.crumbs.floating,
+.journey-picker,
+.immersive-bar {
+  max-width: calc(100vw - var(--L, 0px) - var(--R, 0px) - 24px);
+}
+.toolbar {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 2px;
+}
+.toolbar .tb-sep {
+  flex: none;
+}
+/* Tablet with a drawer open: Dr. Murphy sits beside the drawer, above a (possibly two-row) toolbar. */
+.dm-root.layout-tablet.r-open:not(.in-learn) .dm-fab {
+  right: calc(var(--rw, 360px) + 26px);
+  bottom: calc(132px + env(safe-area-inset-bottom));
+}
+/* Narrow desktop (both panels docked, 1180–1279px): icon-only toolbar keeps a single row under Dr. Murphy. */
+@media (max-width: 1279px) {
+  .layout-desktop .toolbar .tb-text span {
+    display: none;
+  }
+  .layout-desktop .toolbar .tb-text {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+/* Short phones: the right tool rail reaches the bottom bar, so Dr. Murphy moves to the left corner. */
+@media (max-height: 760px) {
+  .dm-root.layout-phone:not(.landscape):not(.in-learn) .dm-fab {
+    right: auto;
+    left: calc(12px + env(safe-area-inset-left));
+  }
+}
+/* Learn breadcrumb: the home crumb keeps its size, the current topic takes the ellipsis. */
+.lcrumbs > button,
+.lcrumbs > svg {
+  flex: none;
+}
+.lcrumbs > span.on {
+  display: block;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+@media (max-width: 640px) {
+  .lcrumbs.has-topic .lc-txt {
+    display: none;
+  }
+}
+/* Phone tool rail: never runs under the top bar or bottom bar. On short screens the zoom buttons
+   (pinch does the same) are dropped so the rail fits; the views menu stays unclipped. */
+.mobile .toolbar {
+  flex-wrap: nowrap;
+  max-width: none;
+}
+.mobile .toolbar > * {
+  flex: none;
+}
+.landscape .toolbar {
+  top: calc(50% + 22px + env(safe-area-inset-top) / 2);
+}
+.landscape .toolbar .icon-btn,
+.landscape .toolbar .tb-text {
+  height: 32px;
+  min-height: 32px;
+}
+.landscape .toolbar .tb-sep {
+  margin: 2px 0;
+}
+.landscape .toolbar [aria-label='Zoom in'],
+.landscape .toolbar [aria-label='Zoom out'] {
+  display: none;
+}
+@media (max-height: 640px) {
+  .mobile:not(.landscape) .toolbar [aria-label='Zoom in'],
+  .mobile:not(.landscape) .toolbar [aria-label='Zoom out'] {
+    display: none;
+  }
+}
+/* Small tablets (iPad mini / iPad portrait) with a drawer open: the free band is too narrow for the
+   bottom toolbar, so it becomes a vertical rail on the open side of the model. */
+@media (max-width: 829px) {
+  .layout-tablet.r-open .toolbar,
+  .layout-tablet.l-open .toolbar {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    max-width: none;
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .layout-tablet.r-open .toolbar {
+    left: calc(12px + env(safe-area-inset-left));
+  }
+  .layout-tablet.l-open .toolbar {
+    left: auto;
+    right: calc(12px + env(safe-area-inset-right));
+  }
+  .layout-tablet.r-open .toolbar .tb-sep,
+  .layout-tablet.l-open .toolbar .tb-sep {
+    width: 20px;
+    height: 1px;
+    margin: 3px 0;
+  }
+  .layout-tablet.r-open .toolbar .menu,
+  .layout-tablet.l-open .toolbar .menu {
+    top: 0;
+    bottom: auto;
+    transform: none;
+  }
+  .layout-tablet.r-open .toolbar .menu {
+    left: 48px;
+    right: auto;
+  }
+  .layout-tablet.l-open .toolbar .menu {
+    right: 48px;
+    left: auto;
+  }
+  .dm-root.layout-tablet.r-open:not(.in-learn) .dm-fab {
+    bottom: calc(22px + env(safe-area-inset-bottom));
+  }
+}
+.app:not(.mobile) .hint {
+  max-width: min(620px, calc(100vw - var(--L, 0px) - var(--R, 0px) - 24px));
+}

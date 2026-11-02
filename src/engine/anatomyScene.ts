@@ -52,6 +52,8 @@ interface UnitView {
   gpuFreed: boolean;
   /** Cached world-space bounding sphere for ray prefiltering. */
   wsphere: THREE.Sphere | null;
+  /** Depth-only pre-pass (translucent muscle / skin layers draw only their front surface). */
+  pre: THREE.Mesh | null;
 }
 
 /**
@@ -73,7 +75,51 @@ interface Batch {
   baseOpacity: number;
   tint: THREE.Color;
   members: number;
+  /** Opacity the members were last checked against (re-check all members when it moves). */
+  syncedOpacity: number;
+  syncedTarget: number;
+  pre: THREE.Mesh | null;
 }
+
+/**
+ * Translucent layers that wrap the body. Each draws a depth-only pre-pass and then only its front-most
+ * surface, so a 30% muscle layer is one tinted veil instead of every muscle stacked (overdraw ×N).
+ */
+const LAYERED: Partial<Record<SystemId, number>> = { muscular: 2, integumentary: 4 };
+
+function createDepthPrepass(mask?: { tex: THREE.DataTexture; w: number }): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    defines: mask ? { BATCH_MASK: '' } : {},
+    uniforms: mask ? { uUnitMask: { value: mask.tex }, uMaskW: { value: mask.w } } : {},
+    vertexShader: /* glsl */ `
+      #ifdef BATCH_MASK
+      attribute float aUnit;
+      uniform highp sampler2D uUnitMask;
+      uniform float uMaskW;
+      #endif
+      void main() {
+        gl_Position = projectionMatrix * (modelViewMatrix * vec4(position, 1.0));
+        #ifdef BATCH_MASK
+        ivec2 tc = ivec2(int(mod(aUnit, uMaskW)), int(floor(aUnit / uMaskW)));
+        if (texelFetch(uUnitMask, tc, 0).r < 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        #endif
+      }`,
+    fragmentShader: /* glsl */ `void main() { gl_FragColor = vec4(0.0); }`,
+    colorWrite: false,
+    depthWrite: true,
+    transparent: true,
+    // Pushed back a hair so the colour pass of the same surface passes the depth test.
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+}
+
+const idle = (cb: () => void) => {
+  const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (ric) ric(cb, { timeout: 400 });
+  else window.setTimeout(cb, 16);
+};
 
 export interface PickHit {
   fj: string;
@@ -123,6 +169,17 @@ export class AnatomyScene {
   /** Called when asynchronous work (worker-cut slabs) changes what should be drawn. */
   onAsync: (() => void) | null = null;
   private batches: Batch[] = [];
+  /** Units with a transition in progress; `update` only visits these. */
+  private active = new Set<UnitView>();
+  /** Units whose batch membership must be re-checked. */
+  private batchDirty = new Set<UnitView>();
+  /** Batch merges still in flight; reported so the start-up screen can wait for them. */
+  private pendingMerges = 0;
+  onBatchProgress: ((pending: number) => void) | null = null;
+
+  get mergesPending() {
+    return this.pendingMerges;
+  }
 
   constructor(
     private registry: Registry,
@@ -142,7 +199,11 @@ export class AnatomyScene {
     return this.units.has(fj);
   }
 
-  addUnits(system: SystemId, loaded: Map<string, LoadedUnit>, filter?: (fj: string) => boolean) {
+  /** Adds the units not yet in the scene; returns how many were new. */
+  /** Units added with `deferBatch`, merged later in one go by `flushBatches` (sliced loading). */
+  private deferred = new Map<SystemId, UnitView[]>();
+
+  addUnits(system: SystemId, loaded: Map<string, LoadedUnit>, filter?: (fj: string) => boolean, deferBatch = false): number {
     const added: UnitView[] = [];
     for (const u of loaded.values()) {
       if (this.units.has(u.fj) || (filter && !filter(u.fj))) continue;
@@ -157,7 +218,9 @@ export class AnatomyScene {
       mesh.quaternion.copy(u.quaternion);
       mesh.scale.copy(u.scale);
       setDetailAxis(material, mesh);
-      mesh.matrixAutoUpdate = true;
+      // Static meshes: matrices are recomposed only when a transform changes (not 2,500× per frame).
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
       mesh.userData.fj = u.fj;
       const view: UnitView = {
         fj: u.fj,
@@ -191,6 +254,7 @@ export class AnatomyScene {
         inBatch: false,
         gpuFreed: false,
         wsphere: null,
+        pre: null,
       };
       this.units.set(u.fj, view);
       added.push(view);
@@ -200,14 +264,36 @@ export class AnatomyScene {
       // Newly arrived meshes fade in rather than popping.
       view.opacity = 0;
       this.syncMaterial(view);
+      this.active.add(view);
     }
     this.pickDirty = true;
-    if (this.opts.batch && added.length) this.buildBatches(system, added);
+    if (this.opts.batch && added.length) {
+      if (deferBatch) this.deferred.set(system, [...(this.deferred.get(system) ?? []), ...added]);
+      else this.buildBatches(system, added);
+    }
     // Structures that arrive while dissecting join the slab layout (recompute the region).
     if (this.state && this.state.explode > 0.001) {
       this.sliceKey = '';
       this.updateSlicing(this.state, this.state);
     }
+    return added.length;
+  }
+
+  /** Merge the batches of units added with `deferBatch`. */
+  flushBatches(system: SystemId) {
+    const views = this.deferred.get(system);
+    this.deferred.delete(system);
+    if (views?.length && this.opts.batch) this.buildBatches(system, views);
+  }
+
+  /** Every mesh the scene currently draws (for staged GPU upload before the first visible frame). */
+  drawnMeshes(): THREE.Mesh[] {
+    const out: THREE.Mesh[] = [];
+    this.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.visible && m.name !== 'outline') out.push(m);
+    });
+    return out;
   }
 
   /** Swap a unit to a full-resolution geometry (same transform frame), or back to body LOD with null. */
@@ -230,9 +316,12 @@ export class AnatomyScene {
       this.hiActive.delete(fj);
     }
     v.mesh.position.copy(v.basePosition).add(v.offset);
+    v.mesh.updateMatrix();
     if (v.outline) v.outline.geometry = v.mesh.geometry;
+    if (v.pre) v.pre.geometry = v.mesh.geometry;
     this.pickDirty = true;
     v.wsphere = null;
+    this.batchDirty.add(v);
     // A geometry swap invalidates any cut copy.
     if (v.split) {
       v.split.geom.dispose();
@@ -291,7 +380,51 @@ export class AnatomyScene {
     const prev = this.state;
     this.state = st;
     if (st.selectedId !== prevSel) this.selectedAt = performance.now();
-    for (const v of this.units.values()) this.computeUnit(v, st);
+    // Hover / selection only: recompute just the units under the old and new hovered/selected nodes.
+    if (
+      prev &&
+      prev.opacity === st.opacity &&
+      prev.hidden === st.hidden &&
+      prev.faded === st.faded &&
+      prev.isolate === st.isolate &&
+      prev.explode <= 0.001 &&
+      st.explode <= 0.001 &&
+      prev.sliceCount === st.sliceCount
+    ) {
+      const touched = new Set<UnitView>();
+      const add = (id: string | null | undefined) => {
+        if (!id) return;
+        for (const fj of this.registry.unitsUnder(id)) {
+          const v = this.units.get(fj);
+          if (v) touched.add(v);
+        }
+      };
+      if (prev.selectedId !== st.selectedId) {
+        add(prev.selectedId);
+        add(st.selectedId);
+      }
+      if (prev.hoveredId !== st.hoveredId) {
+        add(prev.hoveredId);
+        add(st.hoveredId);
+      }
+      for (const v of touched) {
+        this.computeUnit(v, st);
+        this.active.add(v);
+        this.batchDirty.add(v);
+      }
+      this.selCount = 0;
+      this.hoverCount = 0;
+      if (st.selectedId) for (const fj of this.registry.unitsUnder(st.selectedId)) if (this.units.get(fj)?.highlightTarget) this.selCount++;
+      if (st.hoveredId) for (const fj of this.registry.unitsUnder(st.hoveredId)) if (this.units.get(fj)?.hoverTarget) this.hoverCount++;
+      for (const v of touched) this.syncOutline(v);
+      this.syncBatches();
+      return;
+    }
+    for (const v of this.units.values()) {
+      this.computeUnit(v, st);
+      this.active.add(v);
+      this.batchDirty.add(v);
+    }
     this.updateSlicing(st, prev);
     for (const b of this.batches) b.opacityTarget = modeOpacity(b.units);
     this.selCount = 0;
@@ -353,6 +486,7 @@ export class AnatomyScene {
   }
 
   private syncSliceFlag(v: UnitView) {
+    this.batchDirty.add(v);
     const on = v.sliced && !!this.sliceInfo;
     const u = v.material.userData.sliceOn as { value: number } | undefined;
     if (u) u.value = on ? 1 : 0;
@@ -369,6 +503,7 @@ export class AnatomyScene {
     if (v.mesh.geometry !== g) {
       v.mesh.geometry = g;
       if (v.outline) v.outline.geometry = g;
+      if (v.pre) v.pre.geometry = g;
       this.pickDirty = true;
     }
     const f = v.material.userData.sliceSplit as { value: number } | undefined;
@@ -466,7 +601,7 @@ export class AnatomyScene {
       }
       animating = true;
     }
-    for (const v of this.units.values()) {
+    for (const v of this.active) {
       let dirty = false;
       if (Math.abs(v.opacity - v.opacityTarget) > 0.002) {
         v.opacity += (v.opacityTarget - v.opacity) * k;
@@ -487,12 +622,13 @@ export class AnatomyScene {
       if (v.offset.distanceToSquared(v.offsetTarget) > 1e-10) {
         v.offset.lerp(v.offsetTarget, ke);
         v.mesh.position.copy(v.basePosition).add(v.offset);
+        v.mesh.updateMatrix();
         dirty = true;
       }
       if (dirty) {
         this.syncMaterial(v, pulse);
         animating = true;
-      }
+      } else if (!(v.highlightTarget && pulseT < 1)) this.active.delete(v);
     }
     for (const b of this.batches) {
       if (Math.abs(b.opacity - b.opacityTarget) > 0.002) {
@@ -519,8 +655,11 @@ export class AnatomyScene {
       m.needsUpdate = true;
     }
     m.opacity = o;
-    m.depthWrite = o > 0.55;
-    v.mesh.renderOrder = transparent ? 1 : 0;
+    const layer = LAYERED[v.system];
+    m.depthWrite = !transparent || (layer ? false : o > 0.55);
+    v.mesh.renderOrder = transparent ? (layer ? layer + 1 : 1) : 0;
+    this.syncPrepass(v.mesh, v, transparent && !!layer && !v.sliced && v.mesh.visible && o > 0.02, layer ?? 0, () => createDepthPrepass());
+    this.batchDirty.add(v);
     // Selection tints the albedo toward the accent (visible even on near-white bone) plus a soft glow.
     m.color.copy(v.baseColor).lerp(ACCENT, Math.min(0.4, v.highlight * 0.26 * pulse));
     const h = v.highlight * 0.2 * pulse;
@@ -529,6 +668,29 @@ export class AnatomyScene {
     // Ghosted skin reads as a light glass envelope instead of a dark film over the background.
     if (v.system === 'integumentary' && o < 0.9) m.emissive.add(v.baseColor.clone().multiplyScalar(0.4 * (1 - o)));
     this.syncOutline(v);
+  }
+
+  /** Show/hide (creating on demand) the depth pre-pass child of a unit or batch mesh. */
+  private syncPrepass(mesh: THREE.Mesh, owner: { pre: THREE.Mesh | null }, on: boolean, layer: number, make: () => THREE.ShaderMaterial) {
+    if (!on) {
+      if (owner.pre) owner.pre.visible = false;
+      return;
+    }
+    if (!owner.pre) {
+      const pm = make();
+      const pre = new THREE.Mesh(mesh.geometry, pm);
+      pre.raycast = () => undefined;
+      pre.name = 'depth-prepass';
+      pre.matrixAutoUpdate = false;
+      mesh.add(pre);
+      owner.pre = pre;
+    }
+    const pre = owner.pre;
+    pre.geometry = mesh.geometry;
+    (pre.material as THREE.ShaderMaterial).side = (mesh.material as THREE.Material).side;
+    pre.renderOrder = layer;
+    pre.frustumCulled = mesh.frustumCulled;
+    pre.visible = true;
   }
 
   // ---------- outlines ----------
@@ -548,7 +710,7 @@ export class AnatomyScene {
     if (!v.outline) {
       const o = new THREE.Mesh(v.mesh.geometry, this.outlineSel);
       o.raycast = () => undefined;
-      o.renderOrder = 2;
+      o.renderOrder = 1.5;
       o.name = 'outline';
       v.mesh.add(o);
       v.outline = o;
@@ -658,12 +820,15 @@ export class AnatomyScene {
    * Pick at normalised device coordinates. Thin structures (nerves, small vessels) are hard to
    * hit with a single ray, so when the centre ray misses we sample a small ring of rays.
    */
-  pick(ndc: THREE.Vector2, camera: THREE.Camera, ringPx = 0, viewportPx = new THREE.Vector2(1, 1)): PickHit | null {
+  pick(ndc: THREE.Vector2, camera: THREE.Camera, ringPx = 0, viewportPx = new THREE.Vector2(1, 1), build = true): PickHit | null {
     this.refreshPickables();
     const tryRay = (x: number, y: number): PickHit | null => {
       this.raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
       // Bounding-sphere prefilter so BVHs are only built for candidate meshes.
-      const cand = this.candidates(this.raycaster.ray);
+      let cand = this.candidates(this.raycaster.ray);
+      // Hover and zoom pivots never build acceleration structures on the spot (that stalls a frame on
+      // phones); meshes still waiting for their idle-time BVH are skipped and the caller falls back.
+      if (!build) cand = cand.filter((m) => !!m.geometry.boundsTree);
       if (!cand.length) return null;
       this.ensureBvh(cand);
       const hits = this.intersect(cand);
@@ -828,11 +993,31 @@ export class AnatomyScene {
         const ax = (v.material.userData.detail as { uDetailAxis?: { value: THREE.Vector3 } } | undefined)?.uDetailAxis?.value ?? new THREE.Vector3(0, 1, 0);
         return { pos: p.arr, posNorm: p.norm, posSize: p.size, nrm: n?.arr ?? null, nrmNorm: n?.norm ?? false, idx, m: m.toArray(), color: [v.baseColor.r, v.baseColor.g, v.baseColor.b], axis: [ax.x, ax.y, ax.z] };
       });
-      sliceSplitter
-        .merge(mu)
-        .catch(() => mergeUnits({ kind: 'merge', id: 0, units: mu }))
+      this.pendingMerges++;
+      this.onBatchProgress?.(this.pendingMerges);
+      const done = () => {
+        this.pendingMerges--;
+        this.onBatchProgress?.(this.pendingMerges);
+      };
+      const verts = mu.reduce((a, u) => a + (u.pos as Float32Array).length / u.posSize, 0);
+      // Small groups (and machines with few cores) merge on the main thread in idle slices: no worker
+      // round trip, and nothing waits behind the big systems in the worker queue.
+      const inline = verts < 40000 || (navigator.hardwareConcurrency ?? 4) <= 2;
+      const merged: Promise<MergeResult> = inline
+        ? new Promise((resolve, reject) =>
+            idle(() => {
+              try {
+                resolve(mergeUnits({ kind: 'merge', id: 0, units: mu }));
+              } catch (e) {
+                reject(e);
+              }
+            }),
+          )
+        : sliceSplitter.merge(mu).catch(() => mergeUnits({ kind: 'merge', id: 0, units: mu.map((u) => ({ ...u })) }));
+      merged
         .then((r) => this.addBatch(key, system, units, r))
-        .catch((e: unknown) => console.warn('batch build failed', e));
+        .catch((e: unknown) => console.warn('batch build failed', e))
+        .finally(done);
     }
   }
 
@@ -882,10 +1067,14 @@ export class AnatomyScene {
       baseOpacity: (mat.userData.baseOpacity as number | undefined) ?? 1,
       tint,
       members: 0,
+      syncedOpacity: -1,
+      syncedTarget: -1,
+      pre: null,
     };
     units.forEach((v, i) => {
       v.batch = b;
       v.batchIndex = i;
+      this.batchDirty.add(v);
     });
     this.batches.push(b);
     this.root.add(mesh);
@@ -910,39 +1099,52 @@ export class AnatomyScene {
 
   /** Move units between their batch and their own mesh as their state diverges or converges. */
   private syncBatches() {
+    // A batch whose opacity moved re-checks all members; otherwise only units that changed are visited.
     for (const b of this.batches) {
-      let members = 0;
-      for (const v of b.units) {
-        const want = this.batchable(v, b);
-        if (want !== v.inBatch) {
-          v.inBatch = want;
-          b.mask[v.batchIndex] = want ? 255 : 0;
-          b.maskDirty = true;
-          v.mesh.visible = v.logicalVisible && !want;
-          // Drawn by the batch from now on: free the unit's own GPU buffers (re-uploaded on demand).
-          if (want && !v.gpuFreed) {
-            v.gpuFreed = true;
-            v.loGeometry.dispose();
-          }
-        }
-        if (want) members++;
+      if (b.opacity !== b.syncedOpacity || b.opacityTarget !== b.syncedTarget) {
+        b.syncedOpacity = b.opacity;
+        b.syncedTarget = b.opacityTarget;
+        for (const v of b.units) this.batchDirty.add(v);
       }
-      b.members = members;
+    }
+    for (const v of this.batchDirty) {
+      const b = v.batch;
+      if (!b) continue;
+      const want = this.batchable(v, b);
+      if (want !== v.inBatch) {
+        v.inBatch = want;
+        b.mask[v.batchIndex] = want ? 255 : 0;
+        b.maskDirty = true;
+        b.members += want ? 1 : -1;
+        v.mesh.visible = v.logicalVisible && !want;
+        if (v.pre && !v.mesh.visible) v.pre.visible = false;
+        // Drawn by the batch from now on: free the unit's own GPU buffers (re-uploaded on demand).
+        if (want && !v.gpuFreed) {
+          v.gpuFreed = true;
+          v.loGeometry.dispose();
+        }
+        if (!want) this.syncMaterial(v);
+      }
+    }
+    this.batchDirty.clear();
+    for (const b of this.batches) {
       if (b.maskDirty) {
         b.maskTex.needsUpdate = true;
         b.maskDirty = false;
       }
       const m = b.material;
       const o = b.opacity * b.baseOpacity;
-      b.mesh.visible = members > 0 && o > 0.004;
+      b.mesh.visible = b.members > 0 && o > 0.004;
       const transparent = o < 0.995;
       if (m.transparent !== transparent) {
         m.transparent = transparent;
         m.needsUpdate = true;
       }
       m.opacity = o;
-      m.depthWrite = o > 0.55;
-      b.mesh.renderOrder = transparent ? 1 : 0;
+      const layer = LAYERED[b.system];
+      m.depthWrite = !transparent || (layer ? false : o > 0.55);
+      b.mesh.renderOrder = transparent ? (layer ? layer + 1 : 1) : 0;
+      this.syncPrepass(b.mesh, b, transparent && !!layer && b.mesh.visible && o > 0.02 && !this.sliceInfo, layer ?? 0, () => createDepthPrepass({ tex: b.maskTex, w: 256 }));
       m.emissive.setRGB(0, 0, 0);
       if (b.system === 'integumentary' && o < 0.9) m.emissive.copy(b.tint).multiplyScalar(0.4 * (1 - o));
     }
@@ -965,7 +1167,11 @@ export class AnatomyScene {
       b.mesh.geometry.dispose();
       b.material.dispose();
       b.maskTex.dispose();
+      (b.pre?.material as THREE.Material | undefined)?.dispose();
     }
+    for (const v of this.units.values()) (v.pre?.material as THREE.Material | undefined)?.dispose();
+    this.active.clear();
+    this.batchDirty.clear();
     this.batches = [];
     this.releaseWarmup();
     this.outlineSel.dispose();

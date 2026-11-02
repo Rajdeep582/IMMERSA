@@ -11,6 +11,8 @@ export interface RigInputHandlers {
   onGestureStart?: () => void;
   /** When true, a single primary drag pans instead of rotating. */
   panMode?: () => boolean;
+  /** When it returns false the wheel is left to the page (scrolls it) instead of zooming. */
+  wheelGate?: (e: WheelEvent) => boolean;
 }
 
 interface Ptr {
@@ -176,6 +178,7 @@ export class RigInput {
   };
 
   private wheel = (e: WheelEvent) => {
+    if (this.h.wheelGate && !this.h.wheelGate(e)) return;
     e.preventDefault();
     let dy = e.deltaY;
     if (e.deltaMode === 1) dy *= 16;
