@@ -46,7 +46,7 @@ function InspectDriver({ registry, targetId, quality, context, wireframe, viewCm
   // Environment once per context.
   useEffect(() => {
     const pmrem = new THREE.PMREMGenerator(gl);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const env = pmrem.fromScene(new RoomEnvironment(), 0.04, 0.1, 100, { size: 64 }).texture;
     scene.environment = env;
     scene.environmentIntensity = 0.5;
     return () => {

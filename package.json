@@ -1,7 +1,7 @@
 {
   "name": "immersa",
   "private": true,
-  "version": "1.8.4",
+  "version": "1.8.6",
   "type": "module",
   "description": "Immersa \u2014 interactive 3D human anatomy explorer (BodyParts3D, CC BY 4.0)",
   "scripts": {

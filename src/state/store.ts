@@ -126,21 +126,9 @@ export const useApp = create<AppState>((set, get) => ({
   studyMode: false,
   setStudyMode: (studyMode) => set(studyMode ? { studyMode, rightOpen: true } : { studyMode }),
   introActive: typeof document !== 'undefined' && !!document.getElementById('intro'),
-  labels: (() => {
-    try {
-      return localStorage.getItem('immersa.labels') !== '0';
-    } catch {
-      return true;
-    }
-  })(),
-  setLabels: (labels) => {
-    try {
-      localStorage.setItem('immersa.labels', labels ? '1' : '0');
-    } catch {
-      /* ignore */
-    }
-    set({ labels });
-  },
+  // Body labels start off on every launch; the toolbar Labels button (or L) turns them on.
+  labels: false,
+  setLabels: (labels) => set({ labels }),
   setImmersive: (immersive) => set({ immersive }),
   setPanMode: (panMode) => set({ panMode }),
   setBodyModel: (bodyModel, mappedSelection = null) => {

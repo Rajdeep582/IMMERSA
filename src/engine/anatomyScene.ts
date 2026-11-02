@@ -956,10 +956,31 @@ export class AnatomyScene {
       }
     }
     this.warm = group;
-    return gl
-      .compileAsync(group, camera, scene)
-      .catch(() => undefined)
-      .then(() => undefined);
+    // With KHR_parallel_shader_compile the driver compiles in the background. Without it (Safari,
+    // some Android GPUs) compileAsync compiles every program in one blocking call, which froze the
+    // start-up for seconds; there, a few programs are compiled per frame instead.
+    if (gl.extensions.has('KHR_parallel_shader_compile')) {
+      return gl
+        .compileAsync(group, camera, scene)
+        .catch(() => undefined)
+        .then(() => undefined);
+    }
+    const meshes = [...group.children];
+    const step = async () => {
+      for (let i = 0; i < meshes.length; i += 3) {
+        if (this.warm !== group) return;
+        const part = new THREE.Group();
+        part.position.copy(group.position);
+        for (const m of meshes.slice(i, i + 3)) part.add(m.clone());
+        try {
+          gl.compile(part, camera, scene);
+        } catch {
+          /* ignore: compiled lazily on first draw */
+        }
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
+    };
+    return step();
     // The warm-up materials stay referenced for the session so translucent/opaque variants are never
     // released and recompiled when layers fade in and out (they are tiny and never drawn).
   }

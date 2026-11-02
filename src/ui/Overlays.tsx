@@ -1,3 +1,4 @@
+import { loadProgress } from '../engine/loadProgress';
 import { Loader2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -88,29 +89,59 @@ export function LoadingVeil() {
   const first = everReady || (status.skeletal === 'ready' && settled >= eagerIds.length && batchPending === 0);
   if (first) everReady = true;
   const hiRes = useApp((s) => s.hiResRegion);
+  // Bar + label follow the byte-weighted progress (updated as data streams in, not per system).
+  useEffect(() => {
+    if (!window.__intro) return;
+    let raf = 0;
+    const push = () => {
+      raf = 0;
+      const intro = window.__intro;
+      if (!intro) return;
+      const st = useApp.getState();
+      const eager = SYSTEMS.filter((m) => m.eager).map((m) => m.id);
+      const allIn = eager.every((id) => st.systemStatus[id] === 'ready' || st.systemStatus[id] === 'error');
+      if (warmStarted) return;
+      if (allIn) {
+        loadProgress.setFinal(0.35 / (1 + st.batchPending));
+        intro.progress(loadProgress.overall(), 'Optimising for your device');
+      } else {
+        const b = loadProgress.busiest();
+        intro.progress(loadProgress.overall(), b ? (STAGE[b] ?? 'Loading anatomy') : 'Loading anatomy data');
+      }
+    };
+    const kick = () => {
+      if (!raf) raf = requestAnimationFrame(push);
+    };
+    const u1 = loadProgress.subscribe(kick);
+    const u2 = useApp.subscribe(kick);
+    kick();
+    return () => {
+      u1();
+      u2();
+      cancelAnimationFrame(raf);
+    };
+  }, []);
   useEffect(() => {
     const intro = window.__intro;
     if (!intro) {
       if (first) useApp.setState({ introActive: false });
       return;
     }
-    if (first) {
-      if (warmStarted) return;
-      warmStarted = true;
-      // Upload the finished scene to the GPU behind the intro, then lift it.
-      intro.progress(0.995, 'Preparing the 3D view');
-      (viewer.warmUpload?.() ?? Promise.resolve())
-        .catch(() => undefined)
-        .then(() => {
-          window.__intro?.done();
-          useApp.setState({ introActive: false });
-        });
-      return;
-    }
-    const f = 0.06 + 0.9 * Math.min(1, (settled + 0.25 * loading.length) / eagerIds.length);
-    if (settled >= eagerIds.length) intro.progress(Math.min(0.99, 0.96 + 0.03 / (1 + batchPending)), 'Optimising for your device');
-    else intro.progress(f, loading.length ? (STAGE[loading[0]!] ?? 'Loading anatomy') : 'Loading anatomy data');
-  }, [first, status, loading.length, settled, eagerIds.length, batchPending]);
+    if (!first || warmStarted) return;
+    warmStarted = true;
+    // Upload the finished scene to the GPU behind the intro (progress shown), then lift it.
+    loadProgress.setFinal(0.4);
+    intro.progress(loadProgress.overall(), 'Preparing the 3D view');
+    (viewer.warmUpload?.((f) => {
+      loadProgress.setFinal(0.4 + 0.6 * f);
+      window.__intro?.progress(loadProgress.overall(), 'Preparing the 3D view');
+    }) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => {
+        window.__intro?.done();
+        useApp.setState({ introActive: false });
+      });
+  }, [first]);
   useEffect(() => {
     // Never leave the intro up if something stalls.
     const t = window.setTimeout(() => {

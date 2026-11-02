@@ -205,6 +205,8 @@ export function App() {
       useApp.subscribe((s) => {
         const eager = SYSTEMS.filter((m) => m.eager);
         if (!eager.every((m) => s.systemStatus[m.id] === 'ready' || s.systemStatus[m.id] === 'error')) return;
+        // Not while the start-up screen is up: the other body must not compete for bandwidth or the main thread.
+        if (s.introActive) return;
         const other = s.bodyModel === 'male' ? 'female' : 'male';
         window.setTimeout(
           () =>
@@ -212,7 +214,7 @@ export function App() {
               .then(() => loadRegistry(other))
               .then((reg) => prebuildScene(reg, quality))
               .catch(() => undefined),
-          1200,
+          2500,
         );
       }),
     [],

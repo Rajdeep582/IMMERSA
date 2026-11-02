@@ -18,10 +18,12 @@ const loader = new GLTFLoader();
 MeshoptDecoder.useWorkers(workerCount(4));
 loader.setMeshoptDecoder(MeshoptDecoder);
 
-async function fetchWithProgress(url: string, signal: AbortSignal | undefined, onProgress?: (f: number) => void): Promise<ArrayBuffer> {
+async function fetchWithProgress(url: string, signal: AbortSignal | undefined, onProgress?: (f: number) => void, expected = 0): Promise<ArrayBuffer> {
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const total = Number(res.headers.get('content-length') ?? 0);
+  // Compressed responses (brotli on Vercel) carry no usable content-length: fall back to the manifest size.
+  const enc = res.headers.get('content-encoding');
+  const total = (!enc || enc === 'identity' ? Number(res.headers.get('content-length') ?? 0) : 0) || expected;
   if (!res.body || !total || !onProgress) return res.arrayBuffer();
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -78,10 +80,28 @@ export class ModelLibrary {
   /** Optional sink so evicted hi-res geometry is removed from any scene before disposal. */
   onEvictHi?: (chunk: string, units: Map<string, LoadedUnit>) => void;
 
+  private bufs = new Map<SystemId, Promise<ArrayBuffer>>();
+
+  /** Start downloading a system's file now (decoding happens later, in loadSystem). */
+  prefetch(sys: SystemId, file: string, bytes = 0, onProgress?: (f: number) => void): Promise<ArrayBuffer> {
+    const hit = this.bufs.get(sys);
+    if (hit) return hit;
+    if (this.systems.has(sys)) {
+      onProgress?.(1);
+      return Promise.resolve(new ArrayBuffer(0));
+    }
+    const p = fetchWithProgress(this.base + file, undefined, onProgress, bytes);
+    this.bufs.set(sys, p);
+    p.catch(() => this.bufs.delete(sys));
+    return p;
+  }
+
   loadSystem(sys: SystemId, file: string, onProgress?: (f: number) => void): Promise<Map<string, LoadedUnit>> {
     const hit = this.systems.get(sys);
     if (hit) return hit;
-    const p = fetchWithProgress(this.base + file, undefined, onProgress).then(parseUnits);
+    const pre = this.bufs.get(sys);
+    this.bufs.delete(sys); // the decoded result is cached below; drop the raw bytes
+    const p = (pre ?? fetchWithProgress(this.base + file, undefined, onProgress)).then(parseUnits);
     this.systems.set(sys, p);
     p.catch(() => this.systems.delete(sys));
     return p;

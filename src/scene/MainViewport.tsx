@@ -11,6 +11,7 @@ import { HiLodController } from '../engine/hiLod';
 import { libraryFor } from '../engine/models';
 import type { QualityProfile } from '../engine/quality';
 import { RigInput } from '../engine/rigInput';
+import { loadProgress } from '../engine/loadProgress';
 import { viewer } from '../engine/viewer';
 import { useApp } from '../state/store';
 import { useStats } from '../state/stats';
@@ -96,7 +97,7 @@ function Lighting() {
   const { gl, scene } = useThree();
   useEffect(() => {
     const pmrem = new THREE.PMREMGenerator(gl);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const env = pmrem.fromScene(new RoomEnvironment(), 0.04, 0.1, 100, { size: 64 }).texture;
     scene.environment = env;
     scene.environmentIntensity = 0.42;
     return () => {
@@ -172,7 +173,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
     // Staged GPU upload while the start-up screen is up: settle the fades, then draw the scene into a
     // tiny off-screen target a slice of triangles per frame, so buffers and shader programs are on the
     // GPU before the first visible frame (no long freeze when the intro lifts).
-    viewer.warmUpload = async () => {
+    viewer.warmUpload = async (onProgress?: (f: number) => void) => {
       const budget = quality.tier === 'low' ? 60000 : quality.tier === 'medium' ? 150000 : 300000;
       for (let i = 0; i < 60; i++) anat.update(0.25);
       const meshes = anat.drawnMeshes();
@@ -195,6 +196,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
           gl.render(scene, camera);
           gl.setRenderTarget(prevRT);
           meshes.forEach((m, k) => (m.visible = saved[k]!));
+          onProgress?.(i / meshes.length);
           await yieldFrame();
         }
       } finally {
@@ -397,6 +399,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
       library
         .loadSystem(sys, m.file)
         .then(async (units) => {
+          loadProgress.set(sys, 0.85);
           // A late result from a model that has since been switched away must not touch the new state.
           if (useApp.getState().bodyModel !== registry.model) return;
           // Meshes are created a slice at a time between frames (big systems have ~1,000 parts), so the
@@ -407,9 +410,11 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
           for (let i = 0; i < all.length; i += SLICE) {
             if (useApp.getState().bodyModel !== registry.model) return;
             added += anat.addUnits(sys, new Map(all.slice(i, i + SLICE)), undefined, true);
+            loadProgress.set(sys, 0.85 + 0.14 * Math.min(1, (i + SLICE) / all.length));
             if (i + SLICE < all.length) await yieldFrame();
           }
           anat.flushBatches(sys);
+          loadProgress.set(sys, 1);
           useApp.getState().setSystemStatus(sys, 'ready');
           // New meshes only (a cached scene on a body switch has them all): compile new shader programs in
           // parallel (KHR_parallel_shader_compile) and warm picking BVHs in idle time.
@@ -425,6 +430,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
         })
         .catch((e: unknown) => {
           console.error(e);
+          loadProgress.set(sys, 1);
           if (useApp.getState().bodyModel === registry.model) useApp.getState().setSystemStatus(sys, 'error');
         })
         .finally(() => {
@@ -443,8 +449,26 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
         if (want) load(meta.id, urgent);
       }
     };
-    // Compile shader variants while the meshes download.
-    anat.prewarm(gl, scene, camera).then(() => invalidate());
+    // Start-up: every start-up file starts downloading at once (largest first, so the big muscle and
+    // vessel files are not left until the end); decoding still follows the priority order below.
+    if (window.__intro) {
+      const eager = SYSTEMS.filter((m) => m.eager && manifest.systems[m.id]).map((m) => m.id);
+      for (const id of eager) loadProgress.register(id, manifest.systems[id]!.bytes ?? 1);
+      eager
+        .sort((a, b) => (manifest.systems[b]!.bytes ?? 0) - (manifest.systems[a]!.bytes ?? 0))
+        .forEach((id) => void library.prefetch(id, manifest.systems[id]!.file, manifest.systems[id]!.bytes ?? 0, (f) => loadProgress.set(id, 0.7 * f)).catch(() => undefined));
+    }
+    // Shader variants for later fades: compiled after the start-up screen has lifted (the visible scene's
+    // own programs are compiled by warmUpload), so the GPU is not busy with them while the body loads.
+    let prewarmTimer = 0;
+    const prewarm = () => anat.prewarm(gl, scene, camera).then(() => invalidate());
+    if (useApp.getState().introActive) {
+      const off = useApp.subscribe((s) => {
+        if (s.introActive) return;
+        off();
+        prewarmTimer = window.setTimeout(prewarm, 1500);
+      });
+    } else prewarm();
     // Skin and skeleton first: they define the silhouette.
     load('integumentary');
     load('skeletal');
@@ -463,6 +487,7 @@ function SceneDriver({ registry, quality }: { registry: Registry; quality: Quali
       disposed = true;
       unsub();
       clearTimeout(timer);
+      clearTimeout(prewarmTimer);
     };
   }, [anat, invalidate, quality.prefetchLazySystems, registry, library]);
 
